@@ -1,0 +1,300 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <stdbool.h>
+
+typedef enum {
+    TOK_LET, TOK_ASSIGN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_LBRACE, TOK_RBRACE,
+    TOK_PRINT, TOK_PLUS, TOK_MINUS, TOK_EQ, TOK_GT, TOK_LT,
+    TOK_NUM, TOK_STR, TOK_ID, TOK_EOF
+} TokenType;
+
+typedef struct {
+    TokenType type;
+    char value[256];
+} Token;
+
+const char *emoji_keywords[] = {
+    "📦", "🟰", "🤔", "🤷", "🔁", "👇", "👆", "📢", "➕", "➖", "🤝", "📈", "📉"
+};
+TokenType emoji_tokens[] = {
+    TOK_LET, TOK_ASSIGN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_LBRACE, TOK_RBRACE,
+    TOK_PRINT, TOK_PLUS, TOK_MINUS, TOK_EQ, TOK_GT, TOK_LT
+};
+
+char *src_code;
+int src_pos = 0;
+Token current_token;
+
+int match_keyword(const char *p) {
+    for (int i = 0; i < 13; i++) {
+        int len = strlen(emoji_keywords[i]);
+        if (strncmp(p, emoji_keywords[i], len) == 0) return i;
+    }
+    return -1;
+}
+
+void advance_token() {
+    while (isspace(src_code[src_pos])) src_pos++;
+    
+    if (src_code[src_pos] == '\0') {
+        current_token.type = TOK_EOF;
+        return;
+    }
+
+    if (src_code[src_pos] == '"') {
+        src_pos++;
+        int i = 0;
+        while (src_code[src_pos] != '"' && src_code[src_pos] != '\0') {
+            current_token.value[i++] = src_code[src_pos++];
+        }
+        current_token.value[i] = '\0';
+        if (src_code[src_pos] == '"') src_pos++;
+        current_token.type = TOK_STR;
+        return;
+    }
+
+    if (isdigit(src_code[src_pos])) {
+        int i = 0;
+        while (isdigit(src_code[src_pos])) {
+            current_token.value[i++] = src_code[src_pos++];
+        }
+        current_token.value[i] = '\0';
+        current_token.type = TOK_NUM;
+        return;
+    }
+
+    int kw_idx = match_keyword(&src_code[src_pos]);
+    if (kw_idx != -1) {
+        current_token.type = emoji_tokens[kw_idx];
+        strcpy(current_token.value, emoji_keywords[kw_idx]);
+        src_pos += strlen(emoji_keywords[kw_idx]);
+        return;
+    }
+
+    int i = 0;
+    while (src_code[src_pos] != '\0' && !isspace(src_code[src_pos]) && 
+           match_keyword(&src_code[src_pos]) == -1 && src_code[src_pos] != '"') {
+        current_token.value[i++] = src_code[src_pos++];
+    }
+    current_token.value[i] = '\0';
+    current_token.type = TOK_ID;
+}
+
+void eat(TokenType type) {
+    if (current_token.type == type) {
+        advance_token();
+    } else {
+        printf("Syntax Error\n");
+        exit(1);
+    }
+}
+
+typedef enum {
+    AST_LET, AST_ASSIGN, AST_IF, AST_WHILE, AST_PRINT, AST_BLOCK,
+    AST_BINOP, AST_NUM, AST_STR, AST_VAR
+} ASTType;
+
+typedef struct ASTNode {
+    ASTType type;
+    TokenType op;
+    char name[256];
+    int value;
+    struct ASTNode *left, *right;
+    struct ASTNode *true_branch, *false_branch;
+    struct ASTNode *next;
+} ASTNode;
+
+ASTNode* create_node(ASTType type) {
+    ASTNode *node = (ASTNode*)calloc(1, sizeof(ASTNode));
+    node->type = type;
+    return node;
+}
+
+ASTNode* parse_statement();
+ASTNode* parse_expression();
+
+ASTNode* parse_block() {
+    eat(TOK_LBRACE);
+    ASTNode *head = NULL, *tail = NULL;
+    while (current_token.type != TOK_RBRACE && current_token.type != TOK_EOF) {
+        ASTNode *stmt = parse_statement();
+        if (!head) head = tail = stmt;
+        else { tail->next = stmt; tail = stmt; }
+    }
+    eat(TOK_RBRACE);
+    return head;
+}
+
+ASTNode* parse_primary() {
+    ASTNode *node = create_node(AST_NUM);
+    if (current_token.type == TOK_NUM) {
+        node->type = AST_NUM;
+        node->value = atoi(current_token.value);
+        eat(TOK_NUM);
+    } else if (current_token.type == TOK_STR) {
+        node->type = AST_STR;
+        strcpy(node->name, current_token.value);
+        eat(TOK_STR);
+    } else if (current_token.type == TOK_ID) {
+        node->type = AST_VAR;
+        strcpy(node->name, current_token.value);
+        eat(TOK_ID);
+    } else {
+        printf("Expression Parsing Error\n"); exit(1);
+    }
+    return node;
+}
+
+ASTNode* parse_addition() {
+    ASTNode *node = parse_primary();
+    while (current_token.type == TOK_PLUS || current_token.type == TOK_MINUS) {
+        ASTNode *new_node = create_node(AST_BINOP);
+        new_node->op = current_token.type;
+        new_node->left = node;
+        eat(current_token.type);
+        new_node->right = parse_primary();
+        node = new_node;
+    }
+    return node;
+}
+
+ASTNode* parse_expression() {
+    ASTNode *node = parse_addition();
+    if (current_token.type == TOK_EQ || current_token.type == TOK_GT || current_token.type == TOK_LT) {
+        ASTNode *new_node = create_node(AST_BINOP);
+        new_node->op = current_token.type;
+        new_node->left = node;
+        eat(current_token.type);
+        new_node->right = parse_addition();
+        node = new_node;
+    }
+    return node;
+}
+
+ASTNode* parse_statement() {
+    if (current_token.type == TOK_LET) {
+        eat(TOK_LET);
+        ASTNode *node = create_node(AST_LET);
+        strcpy(node->name, current_token.value);
+        eat(TOK_ID);
+        eat(TOK_ASSIGN);
+        node->left = parse_expression();
+        return node;
+    } else if (current_token.type == TOK_ID) {
+        ASTNode *node = create_node(AST_ASSIGN);
+        strcpy(node->name, current_token.value);
+        eat(TOK_ID);
+        eat(TOK_ASSIGN);
+        node->left = parse_expression();
+        return node;
+    } else if (current_token.type == TOK_PRINT) {
+        eat(TOK_PRINT);
+        ASTNode *node = create_node(AST_PRINT);
+        node->left = parse_expression();
+        return node;
+    } else if (current_token.type == TOK_IF) {
+        eat(TOK_IF);
+        ASTNode *node = create_node(AST_IF);
+        node->left = parse_expression();
+        node->true_branch = parse_block();
+        if (current_token.type == TOK_ELSE) {
+            eat(TOK_ELSE);
+            node->false_branch = parse_block();
+        }
+        return node;
+    } else if (current_token.type == TOK_WHILE) {
+        eat(TOK_WHILE);
+        ASTNode *node = create_node(AST_WHILE);
+        node->left = parse_expression();
+        node->true_branch = parse_block();
+        return node;
+    }
+    return NULL;
+}
+
+typedef struct {
+    char name[256];
+    int value;
+} Variable;
+
+Variable env[100];
+int env_count = 0;
+
+void set_var(const char *name, int value) {
+    for (int i = 0; i < env_count; i++) {
+        if (strcmp(env[i].name, name) == 0) { env[i].value = value; return; }
+    }
+    strcpy(env[env_count].name, name);
+    env[env_count].value = value;
+    env_count++;
+}
+
+int get_var(const char *name) {
+    for (int i = 0; i < env_count; i++) {
+        if (strcmp(env[i].name, name) == 0) return env[i].value;
+    }
+    printf("Runtime Error: Variable %s not found\n", name); exit(1);
+}
+
+int eval(ASTNode *node) {
+    if (node->type == AST_NUM) return node->value;
+    if (node->type == AST_VAR) return get_var(node->name);
+    if (node->type == AST_BINOP) {
+        int left = eval(node->left);
+        int right = eval(node->right);
+        if (node->op == TOK_PLUS) return left + right;
+        if (node->op == TOK_MINUS) return left - right;
+        if (node->op == TOK_EQ) return left == right;
+        if (node->op == TOK_GT) return left > right;
+        if (node->op == TOK_LT) return left < right;
+    }
+    return 0;
+}
+
+void execute(ASTNode *stmt) {
+    while (stmt != NULL) {
+        if (stmt->type == AST_LET || stmt->type == AST_ASSIGN) {
+            set_var(stmt->name, eval(stmt->left));
+        } else if (stmt->type == AST_PRINT) {
+            if (stmt->left->type == AST_STR) printf("%s\n", stmt->left->name);
+            else printf("%d\n", eval(stmt->left));
+        } else if (stmt->type == AST_IF) {
+            if (eval(stmt->left)) execute(stmt->true_branch);
+            else if (stmt->false_branch) execute(stmt->false_branch);
+        } else if (stmt->type == AST_WHILE) {
+            while (eval(stmt->left)) execute(stmt->true_branch);
+        }
+        stmt = stmt->next;
+    }
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2) return 1;
+
+    FILE *f = fopen(argv[1], "rb");
+    if (!f) return 1;
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    src_code = (char*)malloc(fsize + 1);
+    fread(src_code, 1, fsize, f);
+    src_code[fsize] = '\0';
+    fclose(f);
+
+    advance_token();
+    ASTNode *program = NULL, *tail = NULL;
+    
+    while (current_token.type != TOK_EOF) {
+        ASTNode *stmt = parse_statement();
+        if (!program) program = tail = stmt;
+        else { tail->next = stmt; tail = stmt; }
+    }
+
+    execute(program);
+    
+    free(src_code);
+    return 0;
+}
