@@ -62,6 +62,15 @@ Value eval(ASTNode *node) {
     Value res = {0, 0, 0.0, ""};
     if (!node) return res;
 
+    // ==========================================
+    // 這裡處理邏輯 NOT (🙅)
+    // ==========================================
+    if (node->type == AST_NOT) {
+        res.type = 0;
+        res.i = !is_truthy(eval(node->left)); // 將裡面的結果反轉
+        return res;
+    }
+
     if (node->type == AST_NUM) { res.i = node->value; return res; }
     if (node->type == AST_FLOAT) { res.type = 1; res.f = node->f_val; return res; }
     if (node->type == AST_STR) { res.type = 2; strcpy(res.s, node->name); return res; }
@@ -77,17 +86,13 @@ Value eval(ASTNode *node) {
         for (int i = 0; i < func_count; i++) {
             if (strcmp(func_table[i].name, node->name) == 0) {
                 FuncDef *fd = &func_table[i];
-                
-                // 1. 把外面傳進來的值先計算好
                 Value arg_vals[20]; int argc = 0;
                 ASTNode *arg = node->left;
                 while (arg) { arg_vals[argc++] = eval(arg); arg = arg->next; }
 
-                // 2. 潛入下一層 (開闢新的區域變數空間)
                 call_depth++;
                 sym_count[call_depth] = 0;
 
-                // 3. 註冊參數成為區域變數，並存入數值
                 ASTNode *p = fd->params;
                 for (int j = 0; j < argc && p; j++) {
                     int addr = alloc_mem(1);
@@ -98,13 +103,10 @@ Value eval(ASTNode *node) {
                     p = p->next;
                 }
 
-                // 4. 執行函數內部的所有程式碼
                 execute(fd->body);
 
-                // 5. 捕捉 🔙 傳遞出來的回傳值，並重置信號
                 if (is_returning) { res = ret_val; is_returning = 0; }
                 
-                // 6. 浮出水面，回到上一層 (區域變數自動失效)
                 call_depth--;
                 return res;
             }
@@ -133,7 +135,27 @@ Value eval(ASTNode *node) {
     if (node->type == AST_DOT) return memory[get_lvalue(node)];
 
     if (node->type == AST_BINOP) {
-        Value left = eval(node->left); Value right = eval(node->right);
+        // ==========================================
+        // 這裡插入邏輯 AND (🔗) 與 OR (🔀) 的短路求值
+        // ==========================================
+        if (node->op == TOK_AND) {
+            Value left = eval(node->left);
+            if (!is_truthy(left)) { left.type = 0; left.i = 0; return left; }
+            Value right = eval(node->right);
+            right.type = 0; right.i = is_truthy(right); return right;
+        }
+        if (node->op == TOK_OR) {
+            Value left = eval(node->left);
+            if (is_truthy(left)) { left.type = 0; left.i = 1; return left; }
+            Value right = eval(node->right);
+            right.type = 0; right.i = is_truthy(right); return right;
+        }
+        
+        // ==========================================
+        // 原本的加減乘除與比較運算 (必須先算好左右兩邊的值)
+        // ==========================================
+        Value left = eval(node->left); 
+        Value right = eval(node->right);
         
         // 支援字串串接
         if (node->op == TOK_PLUS && (left.type == 2 || right.type == 2)) {

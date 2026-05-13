@@ -6,6 +6,7 @@ ASTNode* create_node(ASTType type) {
     return node;
 }
 
+// 提前宣告表達式解析函式
 ASTNode* parse_expression();
 
 ASTNode* parse_primary() {
@@ -33,26 +34,23 @@ ASTNode* parse_primary() {
         strcpy(id_name, current_token.value);
         eat(TOK_ID);
         
-        // 核心更新：如果變數後面緊接著 '('，這是一個函數呼叫！
         if (current_token.type == TOK_LPAREN) {
             eat(TOK_LPAREN);
             node->type = AST_FUNC_CALL;
             strcpy(node->name, id_name);
             ASTNode *head = NULL, *tail = NULL;
             
-            // 解析傳入的參數列表
             while (current_token.type != TOK_RPAREN && current_token.type != TOK_EOF) {
                 ASTNode *arg = parse_expression();
                 if (!head) head = tail = arg; 
                 else { tail->next = arg; tail = arg; }
                 
-                if (current_token.type == TOK_COMMA) eat(TOK_COMMA); // 吃掉逗號
+                if (current_token.type == TOK_COMMA) eat(TOK_COMMA);
             }
             eat(TOK_RPAREN);
             node->left = head;
             return node;
         } else {
-            // 如果沒有括號，那它就只是一個普通的變數
             node->type = AST_VAR;
             strcpy(node->name, id_name);
         }
@@ -84,7 +82,13 @@ ASTNode* parse_postfix() {
 }
 
 ASTNode* parse_prefix() {
-    if (current_token.type == TOK_INPUT) {
+    // 處理邏輯 NOT (🙅)
+    if (current_token.type == TOK_NOT) {
+        eat(TOK_NOT);
+        ASTNode *node = create_node(AST_NOT);
+        node->left = parse_prefix();
+        return node;
+    } else if (current_token.type == TOK_INPUT) {
         eat(TOK_INPUT);
         return create_node(AST_INPUT);
     } else if (current_token.type == TOK_REF) {
@@ -129,7 +133,8 @@ ASTNode* parse_addition() {
     return node;
 }
 
-ASTNode* parse_expression() {
+// 處理 比較大小 (🤝, 📈, 📉)
+ASTNode* parse_comparison() {
     ASTNode *node = parse_addition();
     if (current_token.type == TOK_EQ || current_token.type == TOK_GT || current_token.type == TOK_LT) {
         ASTNode *new_node = create_node(AST_BINOP); new_node->op = current_token.type;
@@ -138,6 +143,31 @@ ASTNode* parse_expression() {
     }
     return node;
 }
+
+// 處理 邏輯 AND (🔗)
+ASTNode* parse_logical_and() {
+    ASTNode *node = parse_comparison();
+    while (current_token.type == TOK_AND) {
+        ASTNode *new_node = create_node(AST_BINOP); new_node->op = current_token.type;
+        new_node->left = node; eat(current_token.type); new_node->right = parse_comparison();
+        node = new_node;
+    }
+    return node;
+}
+
+// 處理 邏輯 OR (🔀)，這是表達式的最上層
+ASTNode* parse_expression() {
+    ASTNode *node = parse_logical_and();
+    while (current_token.type == TOK_OR) {
+        ASTNode *new_node = create_node(AST_BINOP); new_node->op = current_token.type;
+        new_node->left = node; eat(current_token.type); new_node->right = parse_logical_and();
+        node = new_node;
+    }
+    return node;
+}
+
+// 提前宣告
+ASTNode* parse_statement(); 
 
 ASTNode* parse_block() {
     eat(TOK_LBRACE);
@@ -151,7 +181,6 @@ ASTNode* parse_block() {
 }
 
 ASTNode* parse_statement() {
-    // 1. 定義函數 (🛠️ 函數名(參數) 👇 ... 👆)
     if (current_token.type == TOK_FUNC) {
         eat(TOK_FUNC);
         ASTNode *node = create_node(AST_FUNC_DEF);
@@ -169,25 +198,21 @@ ASTNode* parse_statement() {
         node->body = parse_block();
         return node;
     }
-    // 2. 函數回傳 (🔙 回傳值)
     else if (current_token.type == TOK_RETURN) {
         eat(TOK_RETURN);
         ASTNode *node = create_node(AST_RETURN);
         node->left = parse_expression();
         return node;
     }
-    // 3. 變數宣告
     else if (current_token.type == TOK_LET) {
         eat(TOK_LET);
         ASTNode *node = create_node(AST_LET); strcpy(node->name, current_token.value); eat(TOK_ID);
         if (current_token.type == TOK_ASSIGN) { eat(TOK_ASSIGN); node->left = parse_expression(); }
         return node;
     } 
-    // 4. 輸出
     else if (current_token.type == TOK_PRINT) {
         eat(TOK_PRINT); ASTNode *node = create_node(AST_PRINT); node->left = parse_expression(); return node;
     } 
-    // 5. If / Else If / Else
     else if (current_token.type == TOK_IF) {
         eat(TOK_IF); ASTNode *node = create_node(AST_IF);
         node->left = parse_expression(); node->true_branch = parse_block();
@@ -198,27 +223,23 @@ ASTNode* parse_statement() {
         }
         return node;
     } 
-    // 6. While
     else if (current_token.type == TOK_WHILE) {
         eat(TOK_WHILE); ASTNode *node = create_node(AST_WHILE);
         node->left = parse_expression(); node->true_branch = parse_block();
         return node;
     } 
-    // 7. For
     else if (current_token.type == TOK_FOR) {
         eat(TOK_FOR); ASTNode *node = create_node(AST_FOR);
         node->left = parse_statement(); eat(TOK_SEP); node->cond = parse_expression(); eat(TOK_SEP);
         node->step = parse_statement(); node->body = parse_block();
         return node;
     } 
-    // 8. 結構體
     else if (current_token.type == TOK_STRUCT) {
         eat(TOK_STRUCT); ASTNode *node = create_node(AST_STRUCT_DEF);
         strcpy(node->name, current_token.value); eat(TOK_ID); node->body = parse_block();
         return node;
     }
     
-    // 9. 一般運算式或賦值
     ASTNode *expr = parse_expression();
     if (current_token.type == TOK_ASSIGN) {
         eat(TOK_ASSIGN); ASTNode *node = create_node(AST_ASSIGN);

@@ -12,7 +12,8 @@ const char *emoji_keywords[] = {
     "➗", "✂️", "🤝", "📈", "📉", 
     "🎡", "🚧", "🏗️", "🆕", "➡️", 
     "📍", "🎯", "📚", "📌", "📥", 
-    "🟢", "🔴", "🛠️", "🔙"
+    "🟢", "🔴", "🛠️", "🔙",
+    "🔗", "🔀", "🙅"
 };
 
 // 對應的 34 個 Token
@@ -23,12 +24,12 @@ TokenType emoji_tokens[] = {
     TOK_DIV, TOK_MOD, TOK_EQ, TOK_GT, TOK_LT, 
     TOK_FOR, TOK_SEP, TOK_STRUCT, TOK_NEW, TOK_DOT, 
     TOK_REF, TOK_DEREF, TOK_ARRAY, TOK_INDEX, TOK_INPUT,
-    TOK_TRUE, TOK_FALSE, TOK_FUNC, TOK_RETURN
+    TOK_TRUE, TOK_FALSE, TOK_FUNC, TOK_RETURN,
+    TOK_AND, TOK_OR, TOK_NOT
 };
 
 int match_keyword(const char *p) {
-    // 這裡的迴圈次數必須是 34，才能正確讀取到 🛠️ 和 🔙！
-    for (int i = 0; i < 34; i++) { 
+    for (int i = 0; i < 37; i++) { 
         int len = strlen(emoji_keywords[i]);
         if (strncmp(p, emoji_keywords[i], len) == 0) return i;
     }
