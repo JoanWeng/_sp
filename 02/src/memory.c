@@ -44,7 +44,7 @@ void dict_set(int dict_id, const char *key, Value val) {
         d->values[d->count] = val;
         d->count++;
     } else {
-        printf("執行錯誤: 字典容量已滿\n"); exit(1);
+        my_error("執行錯誤: 字典容量已滿", NULL);
     }
 }
 
@@ -54,7 +54,7 @@ Value dict_get(int dict_id, const char *key) {
     for (int i = 0; i < d->count; i++) {
         if (strcmp(d->keys[i], key) == 0) return d->values[i];
     }
-    printf("執行錯誤: 字典找不到鍵值 '%s'\n", key); exit(1);
+    my_error("執行錯誤: 字典找不到鍵值", key);
 }
 
 // 記憶體配置
@@ -76,7 +76,7 @@ int get_sym_addr(const char *name) {
             if (strcmp(sym_stack[0][i].name, name) == 0) return sym_stack[0][i].addr;
         }
     }
-    printf("執行錯誤: 找不到變數 %s\n", name); exit(1);
+    my_error("執行錯誤: 找不到變數", name);
 }
 
 // 取得賦值對象的記憶體位址或索引
@@ -87,7 +87,7 @@ int get_lvalue(ASTNode *node) {
         Value base = eval(node->left);
         // 如果是動態 List 或 Dict，它們不存在於傳統連續記憶體中，因此禁止使用 📍 (取址符號)
         if (base.type == 3 || base.type == 4) {
-            printf("執行錯誤: 無法對動態列表或字典使用 📍 (取址)\n"); exit(1);
+            my_error("執行錯誤: 無法對動態列表或字典使用 📍 (取址)", NULL);
         }
         return base.i + eval(node->right).i;
     }
@@ -98,7 +98,7 @@ int get_lvalue(ASTNode *node) {
         for (int i = 0; i < sd->field_count; i++) { 
             if (strcmp(sd->fields[i], node->name) == 0) return obj_addr + 1 + i; 
         }
-        printf("執行錯誤: 找不到欄位 %s\n", node->name); exit(1);
+        my_error("執行錯誤: 找不到欄位", node->name);
     }
-    printf("執行錯誤: 無效的賦值對象\n"); exit(1);
+    my_error("執行錯誤: 無效的賦值對象", NULL);
 }

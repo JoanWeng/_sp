@@ -1,9 +1,6 @@
 #ifndef EMOLANG_H
 #define EMOLANG_H
 
-#include <stdio.h>
-#include <stdlib.h>
-
 #include "io.h"
 #include "utils.h"
 

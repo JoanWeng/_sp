@@ -94,3 +94,27 @@ double my_atof(const char *str) {
     }
     return sign * res;
 }
+
+void my_itoa(int num, char *buf) {
+    int i = 0, is_neg = 0;
+    if (num == 0) { buf[0] = '0'; buf[1] = '\0'; return; }
+    if (num < 0) { is_neg = 1; num = -num; }
+    while (num > 0) { buf[i++] = '0' + (num % 10); num /= 10; }
+    if (is_neg) buf[i++] = '-';
+    buf[i] = '\0';
+    // 將字串反轉
+    for (int j = 0; j < i / 2; j++) { char t = buf[j]; buf[j] = buf[i - 1 - j]; buf[i - 1 - j] = t; }
+}
+
+void my_ftoa(double f, char *buf) {
+    if (f < 0) { *buf++ = '-'; f = -f; }
+    int int_part = (int)f; double frac = f - int_part;
+    my_itoa(int_part, buf);
+    int len = my_strlen(buf);
+    buf[len++] = '.';
+    for (int i = 0; i < 4; i++) {
+        frac *= 10; int d = (int)frac;
+        buf[len++] = '0' + d; frac -= d;
+    }
+    buf[len] = '\0';
+}

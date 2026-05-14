@@ -35,3 +35,7 @@ double my_atof(const char *str);
 #define atof my_atof
 
 #endif
+
+// 將數字轉為字串 (取代 snprintf)
+void my_itoa(int num, char *buf);
+void my_ftoa(double f, char *buf);

@@ -50,7 +50,7 @@ ASTNode* parse_primary() {
             strcpy(node->name, id_name);
         }
     } else {
-        printf("解析表達式出錯，遇到未知的 Token: %s\n", current_token.value); exit(1);
+        my_error("解析表達式出錯，遇到未知的 Token", current_token.value);
     }
     return node;
 }

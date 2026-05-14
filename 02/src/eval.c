@@ -28,7 +28,7 @@ void assign_value(ASTNode *node, Value val) {
                 return; 
             }
         }
-        printf("執行錯誤: 找不到結構體欄位 %s\n", node->name); exit(1);
+        my_error("執行錯誤: 列表索引超出範圍", NULL);
     }
     if (node->type == AST_INDEX) {
         Value base = eval(node->left);
@@ -36,14 +36,14 @@ void assign_value(ASTNode *node, Value val) {
         
         if (base.type == 3) { // 寫入 List (📋)
             if (idx.i < 0 || idx.i >= list_pool[base.i].count) { 
-                printf("執行錯誤: 列表索引超出範圍\n"); exit(1); 
+                my_error("執行錯誤: 列表索引超出範圍", NULL); 
             }
             list_pool[base.i].items[idx.i] = val; 
             return;
         }
         if (base.type == 4) { // 寫入 Dict (📖)
             if (idx.type != 2) { 
-                printf("執行錯誤: 字典鍵必須為字串\n"); exit(1); 
+                my_error("執行錯誤: 字典鍵必須為字串", NULL); 
             }
             dict_set(base.i, idx.s, val); 
             return;
@@ -52,7 +52,7 @@ void assign_value(ASTNode *node, Value val) {
         memory[base.i + idx.i] = val; 
         return; 
     }
-    printf("執行錯誤: 無效的賦值對象\n"); exit(1);
+    my_error("執行錯誤: 無效的賦值對象", NULL);
 }
 
 // 表達式求值 (遞迴計算樹狀結構的值)
@@ -83,13 +83,13 @@ Value eval(ASTNode *node) {
         Value idx = eval(node->right);
         if (base.type == 3) {
             if (idx.i < 0 || idx.i >= list_pool[base.i].count) { 
-                printf("執行錯誤: 列表索引超出範圍\n"); exit(1); 
+                my_error("執行錯誤: 列表索引超出範圍", NULL); 
             }
             return list_pool[base.i].items[idx.i];
         }
         if (base.type == 4) {
             if (idx.type != 2) { 
-                printf("執行錯誤: 字典的鍵必須為字串\n"); exit(1); 
+                my_error("執行錯誤: 字典鍵必須為字串", NULL);
             }
             return dict_get(base.i, idx.s);
         }
@@ -114,7 +114,7 @@ Value eval(ASTNode *node) {
         if (target.type == 2) res.i = strlen(target.s);
         else if (target.type == 3) res.i = list_pool[target.i].count;
         else if (target.type == 4) res.i = dict_pool[target.i].count;
-        else { printf("執行錯誤: 該型別沒有長度\n"); exit(1); }
+        else { my_error("執行錯誤: 該型別沒有長度", NULL); }
         return res;
     }
     
@@ -146,12 +146,12 @@ Value eval(ASTNode *node) {
                 return res;
             }
         }
-        printf("執行錯誤: 找不到函數 %s\n", node->name); exit(1);
+        my_error("執行錯誤: 找不到函數", node->name);
     }
     
     // 終端機輸入
     if (node->type == AST_INPUT) {
-        char in[256]; scanf("%255s", in);
+        char in[256]; my_read_str(in, 256);
         if (strchr(in, '.')) { res.type = 1; res.f = atof(in); }
         else if (isdigit(in[0]) || (in[0]=='-' && isdigit(in[1]))) { res.type = 0; res.i = atoi(in); }
         else { res.type = 2; strcpy(res.s, in); }
@@ -167,7 +167,7 @@ Value eval(ASTNode *node) {
                 memory[addr].type = 0; memory[addr].i = i; res.i = addr; return res;
             }
         }
-        printf("執行錯誤: 找不到結構 %s\n", node->name); exit(1);
+        my_error("執行錯誤: 找不到結構", node->name);
     }
     if (node->type == AST_DOT) return memory[get_lvalue(node)];
 
@@ -192,9 +192,16 @@ Value eval(ASTNode *node) {
         // 字串串接
         if (node->op == TOK_PLUS && (left.type == 2 || right.type == 2)) {
             res.type = 2; char l[256] = {0}, r[256] = {0};
-            if (left.type == 2) strcpy(l, left.s); else if (left.type == 1) snprintf(l, sizeof(l), "%g", left.f); else snprintf(l, sizeof(l), "%d", left.i);
-            if (right.type == 2) strcpy(r, right.s); else if (right.type == 1) snprintf(r, sizeof(r), "%g", right.f); else snprintf(r, sizeof(r), "%d", right.i);
-            strncpy(res.s, l, 255); res.s[255] = '\0'; strncat(res.s, r, 255 - strlen(res.s));
+            if (left.type == 2) my_strcpy(l, left.s); 
+            else if (left.type == 1) my_ftoa(left.f, l); // 👈 使用自製函式
+            else my_itoa(left.i, l);                     // 👈 使用自製函式
+            
+            if (right.type == 2) my_strcpy(r, right.s); 
+            else if (right.type == 1) my_ftoa(right.f, r); 
+            else my_itoa(right.i, r);
+            
+            my_strncpy(res.s, l, 255); res.s[255] = '\0'; 
+            my_strncat(res.s, r, 255 - my_strlen(res.s));
             return res;
         }
 
@@ -220,33 +227,63 @@ Value eval(ASTNode *node) {
 // 完美的印出函式 (支援陣列 [ ] 與 字典 { })
 void print_value(Value v) {
     if (v.type == 3) {
-        printf("[");
+        // 印出列表 [ ... ]
+        my_print_str("[");
         for (int i = 0; i < list_pool[v.i].count; i++) {
             Value item = list_pool[v.i].items[i];
-            if (item.type == 2) printf("\"%s\"", item.s); 
-            else if (item.type == 1) printf("%g", item.f); 
-            else printf("%d", item.i);
+            if (item.type == 2) { 
+                my_print_str("\""); 
+                my_print_str(item.s); 
+                my_print_str("\""); 
+            } 
+            else if (item.type == 1) my_print_float(item.f); 
+            else my_print_int(item.i);
             
-            if (i < list_pool[v.i].count - 1) printf(", ");
+            if (i < list_pool[v.i].count - 1) my_print_str(", ");
         }
-        printf("]\n");
-    } else if (v.type == 4) {
-        printf("{");
+        my_print_str("]");
+        my_print_newline();
+    } 
+    else if (v.type == 4) {
+        // 印出字典 { "key": value, ... }
+        my_print_str("{");
         for (int i = 0; i < dict_pool[v.i].count; i++) {
             Value item = dict_pool[v.i].values[i];
-            printf("\"%s\": ", dict_pool[v.i].keys[i]);
             
-            if (item.type == 2) printf("\"%s\"", item.s); 
-            else if (item.type == 1) printf("%g", item.f); 
-            else printf("%d", item.i);
+            // 印出 Key
+            my_print_str("\"");
+            my_print_str(dict_pool[v.i].keys[i]);
+            my_print_str("\": ");
             
-            if (i < dict_pool[v.i].count - 1) printf(", ");
+            // 印出 Value
+            if (item.type == 2) { 
+                my_print_str("\""); 
+                my_print_str(item.s); 
+                my_print_str("\""); 
+            } 
+            else if (item.type == 1) my_print_float(item.f); 
+            else my_print_int(item.i);
+            
+            if (i < dict_pool[v.i].count - 1) my_print_str(", ");
         }
-        printf("}\n");
+        my_print_str("}");
+        my_print_newline();
     } 
-    else if (v.type == 2) printf("%s\n", v.s); 
-    else if (v.type == 1) printf("%g\n", v.f); 
-    else printf("%d\n", v.i);
+    else if (v.type == 2) {
+        // 單純印出字串
+        my_print_str(v.s); 
+        my_print_newline();
+    } 
+    else if (v.type == 1) {
+        // 單純印出小數
+        my_print_float(v.f); 
+        my_print_newline();
+    } 
+    else {
+        // 單純印出整數/布林
+        my_print_int(v.i); 
+        my_print_newline();
+    }
 }
 
 // 執行 AST 的主邏輯
@@ -273,11 +310,11 @@ void execute(ASTNode *stmt) {
         } 
         else if (stmt->type == AST_APPEND) { // 將資料推入 List 🛒
             Value list = eval(stmt->left);
-            if (list.type != 3) { printf("執行錯誤: 只能對列表使用 🛒 (追加)\n"); exit(1); }
+            if (list.type != 3) { my_error("執行錯誤: 只能對列表使用 🛒 (追加)", NULL); }
             Value val = eval(stmt->right);
             ListObj *l = &list_pool[list.i];
             if (l->count < 100) l->items[l->count++] = val;
-            else { printf("執行錯誤: 列表容量已滿\n"); exit(1); }
+            else { my_error("執行錯誤: 列表容量已滿", NULL); }
         }
         else if (stmt->type == AST_STRUCT_DEF) {
             StructDef *sd = &struct_table[struct_count++]; strcpy(sd->name, stmt->name); sd->field_count = 0;

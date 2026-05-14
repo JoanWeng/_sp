@@ -1,8 +1,5 @@
 #include "emolang.h"
 
-char *src_code;
-int src_pos = 0;
-Token current_token;
 
 // 包含所有 34 個 Emoji 的完整關鍵字表
 const char *emoji_keywords[] = {
@@ -85,5 +82,5 @@ void advance_token() {
 
 void eat(TokenType type) {
     if (current_token.type == type) advance_token();
-    else { printf("語法錯誤: 遇到未預期的 Token '%s'\n", current_token.value); exit(1); }
+    else { my_error("語法錯誤: 遇到未預期的 Token", current_token.value); }
 }
