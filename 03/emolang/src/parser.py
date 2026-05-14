@@ -19,7 +19,26 @@ class EmoLangParser:
         return statements
 
     def parse_expression(self):
-        return self.parse_comparison()
+        node = self.parse_logical_and()
+        while self.lexer.current_token.type == TokenType.TOK_OR:
+            new_node = self.create_node(ASTType.AST_BINOP)
+            new_node.op = self.lexer.current_token.type
+            new_node.left = node
+            self.lexer.advance()
+            new_node.right = self.parse_logical_and()
+            node = new_node
+        return node
+
+    def parse_logical_and(self):
+        node = self.parse_comparison()
+        while self.lexer.current_token.type == TokenType.TOK_AND:
+            new_node = self.create_node(ASTType.AST_BINOP)
+            new_node.op = self.lexer.current_token.type
+            new_node.left = node
+            self.lexer.advance()
+            new_node.right = self.parse_comparison()
+            node = new_node
+        return node
 
     def parse_comparison(self):
         node = self.parse_addition()
@@ -55,7 +74,12 @@ class EmoLangParser:
         return node
 
     def parse_prefix(self):
-        if self.lexer.current_token.type == TokenType.TOK_INPUT:
+        if self.lexer.current_token.type == TokenType.TOK_NOT:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_NOT)
+            node.left = self.parse_prefix()
+            return node
+        elif self.lexer.current_token.type == TokenType.TOK_INPUT:
             self.lexer.advance()
             return self.create_node(ASTType.AST_INPUT)
         elif self.lexer.current_token.type == TokenType.TOK_REF:

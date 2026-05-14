@@ -42,6 +42,9 @@ class EmoLangLexer:
             "🔴": TokenType.TOK_FALSE,
             "🛠️": TokenType.TOK_FUNC,
             "🔙": TokenType.TOK_RETURN,
+            "🔗": TokenType.TOK_AND,
+            "🔀": TokenType.TOK_OR,
+            "🙅": TokenType.TOK_NOT,
         }
 
     def skip_space(self):

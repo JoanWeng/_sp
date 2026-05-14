@@ -6,30 +6,24 @@ Token current_token;
 
 // 包含所有 34 個 Emoji 的完整關鍵字表
 const char *emoji_keywords[] = {
-    "📦", "🔢", "🎈", "📝", "🚦", 
-    "🟰", "🤔", "🤷", "🔁", "👇", 
-    "👆", "📢", "➕", "➖", "✖️", 
-    "➗", "✂️", "🤝", "📈", "📉", 
-    "🎡", "🚧", "🏗️", "🆕", "➡️", 
-    "📍", "🎯", "📚", "📌", "📥", 
-    "🟢", "🔴", "🛠️", "🔙",
-    "🔗", "🔀", "🙅"
+    "📦", "🔢", "🎈", "📝", "🚦", "🟰", "🤔", "🤷", "🔁", "👇", 
+    "👆", "📢", "➕", "➖", "✖️", "➗", "✂️", "🤝", "📈", "📉", 
+    "🎡", "🚧", "🏗️", "🆕", "➡️", "📍", "🎯", "📚", "📌", "📥", 
+    "🟢", "🔴", "🛠️", "🔙", "🔗", "🔀", "🙅",
+    "📋", "📖", "🛒", "📏"
 };
-
 // 對應的 34 個 Token
 TokenType emoji_tokens[] = {
     TOK_LET, TOK_LET, TOK_LET, TOK_LET, TOK_LET,
-    TOK_ASSIGN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_LBRACE, 
-    TOK_RBRACE, TOK_PRINT, TOK_PLUS, TOK_MINUS, TOK_MUL, 
-    TOK_DIV, TOK_MOD, TOK_EQ, TOK_GT, TOK_LT, 
-    TOK_FOR, TOK_SEP, TOK_STRUCT, TOK_NEW, TOK_DOT, 
-    TOK_REF, TOK_DEREF, TOK_ARRAY, TOK_INDEX, TOK_INPUT,
-    TOK_TRUE, TOK_FALSE, TOK_FUNC, TOK_RETURN,
-    TOK_AND, TOK_OR, TOK_NOT
+    TOK_ASSIGN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_LBRACE, TOK_RBRACE, TOK_PRINT, TOK_PLUS, TOK_MINUS, TOK_MUL, 
+    TOK_DIV, TOK_MOD, TOK_EQ, TOK_GT, TOK_LT, TOK_FOR, TOK_SEP, TOK_STRUCT, TOK_NEW, TOK_DOT, 
+    TOK_REF, TOK_DEREF, TOK_ARRAY, TOK_INDEX, TOK_INPUT, TOK_TRUE, TOK_FALSE, TOK_FUNC, TOK_RETURN,
+    TOK_AND, TOK_OR, TOK_NOT,
+    TOK_LIST, TOK_DICT, TOK_APPEND, TOK_LEN
 };
 
 int match_keyword(const char *p) {
-    for (int i = 0; i < 37; i++) { 
+    for (int i = 0; i < 41; i++) { 
         int len = strlen(emoji_keywords[i]);
         if (strncmp(p, emoji_keywords[i], len) == 0) return i;
     }

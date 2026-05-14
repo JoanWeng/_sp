@@ -82,6 +82,11 @@ class EmoLangEvaluator:
         if node.type == ASTType.AST_FALSE:
             res.i = 0
             return res
+        if node.type == ASTType.AST_NOT:
+            val = self.eval(node.left)
+            res.type = 0
+            res.i = 0 if self.is_truthy(val) else 1
+            return res
         if node.type == ASTType.AST_VAR:
             return self.memory[self.get_sym_addr(node.name)]
         if node.type == ASTType.AST_REF:
@@ -158,6 +163,27 @@ class EmoLangEvaluator:
             return self.memory[self.get_lvalue(node)]
 
         if node.type == ASTType.AST_BINOP:
+            if node.op == TokenType.TOK_AND:
+                left = self.eval(node.left)
+                if not self.is_truthy(left):
+                    res.type = 0
+                    res.i = 0
+                    return res
+                right = self.eval(node.right)
+                res.type = 0
+                res.i = 1 if self.is_truthy(right) else 0
+                return res
+            if node.op == TokenType.TOK_OR:
+                left = self.eval(node.left)
+                if self.is_truthy(left):
+                    res.type = 0
+                    res.i = 1
+                    return res
+                right = self.eval(node.right)
+                res.type = 0
+                res.i = 1 if self.is_truthy(right) else 0
+                return res
+
             left = self.eval(node.left)
             right = self.eval(node.right)
 

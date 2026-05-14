@@ -24,6 +24,7 @@ class ASTType:
     AST_FUNC_DEF = "FUNC_DEF"
     AST_FUNC_CALL = "FUNC_CALL"
     AST_RETURN = "RETURN"
+    AST_NOT = "NOT"
 
 
 class ASTNode:

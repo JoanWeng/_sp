@@ -36,6 +36,9 @@ class TokenType:
     TOK_ID = "ID"
     TOK_FUNC = "FUNC"
     TOK_RETURN = "RETURN"
+    TOK_AND = "AND"
+    TOK_OR = "OR"
+    TOK_NOT = "NOT"
     TOK_EOF = "EOF"
 
 
