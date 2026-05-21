@@ -25,6 +25,10 @@ class ASTType:
     AST_FUNC_CALL = "FUNC_CALL"
     AST_RETURN = "RETURN"
     AST_NOT = "NOT"
+    AST_NEW_LIST = "NEW_LIST"
+    AST_NEW_DICT = "NEW_DICT"
+    AST_APPEND = "APPEND"
+    AST_LEN = "LEN"
 
 
 class ASTNode:

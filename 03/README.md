@@ -76,6 +76,10 @@ class TokenType:
     TOK_EQ       # 等於 (🤝)
     TOK_GT       # 大於 (📈)
     TOK_LT       # 小於 (📉)
+    TOK_LIST     # 建立列表 (📋)
+    TOK_DICT     # 建立字典 (📖)
+    TOK_APPEND   # 追加列表元素 (🛒)
+    TOK_LEN      # 計算長度 (📏)
     # ... 更多
 ```
 
@@ -98,6 +102,10 @@ class ASTType:
     AST_FUNC_DEF     # 函數定義
     AST_FUNC_CALL    # 函數呼叫
     AST_RETURN       # 回傳
+    AST_NEW_LIST     # 建立列表
+    AST_NEW_DICT     # 建立字典
+    AST_APPEND       # 追加列表元素
+    AST_LEN          # 計算長度
     # ... 更多
 ```
 
@@ -150,6 +158,8 @@ class EmoLangEvaluator:
         self.struct_table = {}  # 結構體表
         self.func_table = {}    # 函數表
         self.sym_stack = [{}]   # 符號堆疊
+        self.list_pool = []     # 列表池 (📋)
+        self.dict_pool = []     # 字典池 (📖)
 
     def eval(self, node):
         # 求值表達式

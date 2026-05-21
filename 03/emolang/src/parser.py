@@ -73,11 +73,12 @@ class EmoLangParser:
             node = new_node
         return node
 
-    def parse_prefix(self):
+    # Parse only prefix operators (no postfix wrapping inside)
+    def parse_prefix_only(self):
         if self.lexer.current_token.type == TokenType.TOK_NOT:
             self.lexer.advance()
             node = self.create_node(ASTType.AST_NOT)
-            node.left = self.parse_prefix()
+            node.left = self.parse_prefix_only()
             return node
         elif self.lexer.current_token.type == TokenType.TOK_INPUT:
             self.lexer.advance()
@@ -85,16 +86,27 @@ class EmoLangParser:
         elif self.lexer.current_token.type == TokenType.TOK_REF:
             self.lexer.advance()
             node = self.create_node(ASTType.AST_REF)
-            node.left = self.parse_prefix()
+            node.left = self.parse_prefix_only()
             return node
         elif self.lexer.current_token.type == TokenType.TOK_DEREF:
             self.lexer.advance()
             node = self.create_node(ASTType.AST_DEREF)
-            node.left = self.parse_prefix()
+            node.left = self.parse_prefix_only()
+            return node
+        elif self.lexer.current_token.type == TokenType.TOK_LEN:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_LEN)
+            node.left = self.parse_prefix_only()
             return node
         elif self.lexer.current_token.type == TokenType.TOK_NEW:
             self.lexer.advance()
-            if self.lexer.current_token.type == TokenType.TOK_ARRAY:
+            if self.lexer.current_token.type == TokenType.TOK_LIST:
+                self.lexer.advance()
+                return self.create_node(ASTType.AST_NEW_LIST)
+            elif self.lexer.current_token.type == TokenType.TOK_DICT:
+                self.lexer.advance()
+                return self.create_node(ASTType.AST_NEW_DICT)
+            elif self.lexer.current_token.type == TokenType.TOK_ARRAY:
                 self.lexer.advance()
                 node = self.create_node(ASTType.AST_ARRAY_ALLOC)
                 node.left = self.parse_primary()
@@ -104,10 +116,12 @@ class EmoLangParser:
                 node.name = self.lexer.current_token.value
                 self.lexer.advance()
                 return node
-        return self.parse_postfix()
+        return self.parse_primary()
 
-    def parse_postfix(self):
-        node = self.parse_primary()
+    # Prefix then postfix: handle prefix ops, then wrap with postfix (dot/index)
+    def parse_prefix(self):
+        node = self.parse_prefix_only()
+        # Apply postfix operators (dot/index) which have higher precedence
         while self.lexer.current_token.type in [TokenType.TOK_DOT, TokenType.TOK_INDEX]:
             if self.lexer.current_token.type == TokenType.TOK_DOT:
                 self.lexer.advance()
@@ -265,6 +279,12 @@ class EmoLangParser:
         if self.lexer.current_token.type == TokenType.TOK_ASSIGN:
             self.lexer.advance()
             node = self.create_node(ASTType.AST_ASSIGN)
+            node.left = expr
+            node.right = self.parse_expression()
+            return node
+        elif self.lexer.current_token.type == TokenType.TOK_APPEND:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_APPEND)
             node.left = expr
             node.right = self.parse_expression()
             return node

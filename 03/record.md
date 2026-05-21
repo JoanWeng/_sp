@@ -117,7 +117,38 @@
 
 ---
 
-## 待完成
+### 6. 新增列表 (List) 與字典 (Dictionary) 支援
 
-- [ ] 安裝 tkinter 以測試 GUI 功能
-- [ ] 測試 AND/OR/NOT 運算子在 GUI 中的顯示
+從 02 目錄的 C 語言版本移植列表/字典功能：
+
+| Emoji | 指令 | 說明 |
+|-------|------|------|
+| 📋 | LIST | `🆕 📋` (建立列表) |
+| 📖 | DICT | `🆕 📖` (建立字典) |
+| 🛒 | APPEND | `list 🛒 值` (追加元素) |
+| 📏 | LEN | `📏 obj` (長度) |
+
+**修改的檔案：**
+- `tokens.py`: 新增 `TOK_LIST`, `TOK_DICT`, `TOK_APPEND`, `TOK_LEN`
+- `ast.py`: 新增 `AST_NEW_LIST`, `AST_NEW_DICT`, `AST_APPEND`, `AST_LEN`
+- `lexer.py`: 新增關鍵字映射 📋, 📖, 🛒, 📏
+- `parser.py`: 重構 `parse_prefix` → `parse_prefix_only` + 後綴包裝以修正 `🎯` 與 `➡️` 的優先級順序；新增 APPEND 語句處理
+- `evaluator.py`: 新增 `list_pool`/`dict_pool`、`assign_value`（支援列表/字典索引賦值）、`dict_set`/`dict_get`、漂亮輸出列表 `[a, b]` 與字典 `{"k": v}`
+- `README.md`: 更新 Token/AST/Evaluator 說明
+- `commands.md`: 新增列表與字典指令
+
+**修復的 Bug：** 解析器優先級 — `🎯 ptr ➡️ 攻擊力` 原解析為 `DEREF(DOT(VAR, field))`（02 C 版本亦有此錯誤），修正為 `DOT(DEREF(VAR), field)`，使指標 + 結構體欄位賦值能正確運作。
+
+**測試範例：**
+```
+📦 items 🟰 🆕 📋
+items 🛒 "蘋果"
+📢 items              # 輸出: ["蘋果"]
+
+📦 player 🟰 🆕 📖
+player📌"hp" 🟰 100
+📢 player            # 輸出: {"hp": 100}
+📢 📏 player         # 輸出: 1
+```
+
+---

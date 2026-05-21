@@ -39,6 +39,10 @@ class TokenType:
     TOK_AND = "AND"
     TOK_OR = "OR"
     TOK_NOT = "NOT"
+    TOK_LIST = "LIST"
+    TOK_DICT = "DICT"
+    TOK_APPEND = "APPEND"
+    TOK_LEN = "LEN"
     TOK_EOF = "EOF"
 
 

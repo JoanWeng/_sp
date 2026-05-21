@@ -20,6 +20,8 @@ class EmoLangEvaluator:
         self.is_returning = False
         self.output = []
         self.input_callback = None
+        self.list_pool = []
+        self.dict_pool = []
 
     def alloc_mem(self, size):
         addr = self.heap_ptr
@@ -41,6 +43,37 @@ class EmoLangEvaluator:
             return len(v.s) > 0
         return 0
 
+    def assign_value(self, node, val):
+        if node.type == ASTType.AST_VAR:
+            self.memory[self.get_sym_addr(node.name)] = val
+            return
+        if node.type == ASTType.AST_DEREF:
+            self.memory[self.eval(node.left).i] = val
+            return
+        if node.type == ASTType.AST_DOT:
+            obj_addr = self.eval(node.left).i
+            sid = self.memory[obj_addr].i
+            sd = self.struct_table[sid]
+            field_addr = obj_addr + 1 + sd["fields"].index(node.name)
+            self.memory[field_addr] = val
+            return
+        if node.type == ASTType.AST_INDEX:
+            base = self.eval(node.left)
+            idx = self.eval(node.right)
+            if base.type == 3:
+                if idx.i < 0 or idx.i >= self.list_pool[base.i]["count"]:
+                    raise RuntimeError("執行錯誤: 列表索引超出範圍")
+                self.list_pool[base.i]["items"][idx.i] = val
+                return
+            if base.type == 4:
+                if idx.type != 2:
+                    raise RuntimeError("執行錯誤: 字典鍵必須為字串")
+                self.dict_set(base.i, idx.s, val)
+                return
+            self.memory[base.i + idx.i] = val
+            return
+        raise RuntimeError("無效的賦值對象")
+
     def get_lvalue(self, node):
         if node.type == ASTType.AST_VAR:
             return self.get_sym_addr(node.name)
@@ -49,15 +82,29 @@ class EmoLangEvaluator:
         elif node.type == ASTType.AST_INDEX:
             return self.eval(node.left).i + self.eval(node.right).i
         elif node.type == ASTType.AST_DOT:
-            if node.left.type == ASTType.AST_DEREF:
-                obj_addr = self.eval(node.left.left).i
-            else:
-                obj_addr = self.eval(node.left).i
+            obj_addr = self.eval(node.left).i
             sid = self.memory[obj_addr].i
             sd = self.struct_table[sid]
             field_addr = obj_addr + 1 + sd["fields"].index(node.name)
             return field_addr
         raise RuntimeError("無效的賦值對象")
+
+    def dict_set(self, dict_id, key, val):
+        d = self.dict_pool[dict_id]
+        for i in range(d["count"]):
+            if d["keys"][i] == key:
+                d["values"][i] = val
+                return
+        d["keys"][d["count"]] = key
+        d["values"][d["count"]] = val
+        d["count"] += 1
+
+    def dict_get(self, dict_id, key):
+        d = self.dict_pool[dict_id]
+        for i in range(d["count"]):
+            if d["keys"][i] == key:
+                return d["values"][i]
+        raise RuntimeError(f"找不到字典鍵: {key}")
 
     def eval(self, node):
         if node is None:
@@ -95,7 +142,44 @@ class EmoLangEvaluator:
         if node.type == ASTType.AST_DEREF:
             return self.memory[self.eval(node.left).i]
         if node.type == ASTType.AST_INDEX:
-            return self.memory[self.get_lvalue(node)]
+            base = self.eval(node.left)
+            idx = self.eval(node.right)
+            if base.type == 3:
+                if idx.i < 0 or idx.i >= self.list_pool[base.i]["count"]:
+                    raise RuntimeError("執行錯誤: 列表索引超出範圍")
+                return self.list_pool[base.i]["items"][idx.i]
+            if base.type == 4:
+                if idx.type != 2:
+                    raise RuntimeError("執行錯誤: 字典鍵必須為字串")
+                return self.dict_get(base.i, idx.s)
+            return self.memory[base.i + idx.i]
+
+        if node.type == ASTType.AST_NEW_LIST:
+            list_id = len(self.list_pool)
+            self.list_pool.append({"items": [Value() for _ in range(100)], "count": 0})
+            res.type = 3
+            res.i = list_id
+            return res
+
+        if node.type == ASTType.AST_NEW_DICT:
+            dict_id = len(self.dict_pool)
+            self.dict_pool.append({"keys": ["" for _ in range(100)], "values": [Value() for _ in range(100)], "count": 0})
+            res.type = 4
+            res.i = dict_id
+            return res
+
+        if node.type == ASTType.AST_LEN:
+            target = self.eval(node.left)
+            res.type = 0
+            if target.type == 2:
+                res.i = len(target.s)
+            elif target.type == 3:
+                res.i = self.list_pool[target.i]["count"]
+            elif target.type == 4:
+                res.i = self.dict_pool[target.i]["count"]
+            else:
+                raise RuntimeError("執行錯誤: 該型別沒有長度")
+            return res
 
         if node.type == ASTType.AST_FUNC_CALL:
             if node.name in self.func_table:
@@ -259,7 +343,19 @@ class EmoLangEvaluator:
                     self.memory[addr] = self.eval(stmt.left)
 
             elif stmt.type == ASTType.AST_ASSIGN:
-                self.memory[self.get_lvalue(stmt.left)] = self.eval(stmt.right)
+                self.assign_value(stmt.left, self.eval(stmt.right))
+
+            elif stmt.type == ASTType.AST_APPEND:
+                list_val = self.eval(stmt.left)
+                if list_val.type != 3:
+                    raise RuntimeError("執行錯誤: 只能對列表使用 🛒 (追加)")
+                val = self.eval(stmt.right)
+                l = self.list_pool[list_val.i]
+                if l["count"] < 100:
+                    l["items"][l["count"]] = val
+                    l["count"] += 1
+                else:
+                    raise RuntimeError("執行錯誤: 列表容量已滿")
 
             elif stmt.type == ASTType.AST_STRUCT_DEF:
                 sid = len(self.struct_table)
@@ -276,7 +372,32 @@ class EmoLangEvaluator:
 
             elif stmt.type == ASTType.AST_PRINT:
                 v = self.eval(stmt.left)
-                if v.type == 2:
+                if v.type == 3:
+                    items = []
+                    l = self.list_pool[v.i]
+                    for idx in range(l["count"]):
+                        item = l["items"][idx]
+                        if item.type == 2:
+                            items.append(f'"{item.s}"')
+                        elif item.type == 1:
+                            items.append(str(item.f))
+                        else:
+                            items.append(str(item.i))
+                    self.output.append("[" + ", ".join(items) + "]")
+                elif v.type == 4:
+                    pairs = []
+                    d = self.dict_pool[v.i]
+                    for idx in range(d["count"]):
+                        val = d["values"][idx]
+                        if val.type == 2:
+                            val_str = f'"{val.s}"'
+                        elif val.type == 1:
+                            val_str = str(val.f)
+                        else:
+                            val_str = str(val.i)
+                        pairs.append(f'"{d["keys"][idx]}": {val_str}')
+                    self.output.append("{" + ", ".join(pairs) + "}")
+                elif v.type == 2:
                     self.output.append(v.s)
                 elif v.type == 1:
                     self.output.append(str(v.f))
