@@ -1,6 +1,5 @@
 from tokens import TokenType
 from ast import ASTType, ASTNode
-from lexer import EmoLangLexer
 
 
 class EmoLangParser:

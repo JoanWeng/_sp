@@ -5,7 +5,6 @@ class ASTType:
     AST_WHILE = "WHILE"
     AST_FOR = "FOR"
     AST_PRINT = "PRINT"
-    AST_BLOCK = "BLOCK"
     AST_BINOP = "BINOP"
     AST_NUM = "NUM"
     AST_STR = "STR"
@@ -45,4 +44,3 @@ class ASTNode:
         self.cond = None
         self.step = None
         self.body = None
-        self.next = None

@@ -34,7 +34,7 @@ void emit(const char* op, const char* a1, const char* a2, const char* res) {
 // 它會自動過濾空白與註解，並辨識關鍵字（func, if, return）或識別碼（ID）。
 // =========================================================
 typedef enum {
-    TK_FUNC, TK_RETURN, TK_IF, TK_ID, TK_NUM, 
+    TK_FUNC, TK_RETURN, TK_IF, TK_WHILE, TK_ID, TK_NUM, 
     TK_LPAREN, TK_RPAREN, TK_LBRACE, TK_RBRACE, TK_COMMA, TK_SEMICOLON,
     TK_ASSIGN, TK_PLUS, TK_MINUS, TK_MUL, TK_DIV, 
     TK_EQ, TK_LT, TK_GT, TK_EOF
@@ -77,6 +77,7 @@ void next_token() {
         if (strcmp(cur_token.text, "func") == 0) cur_token.type = TK_FUNC;
         else if (strcmp(cur_token.text, "return") == 0) cur_token.type = TK_RETURN;
         else if (strcmp(cur_token.text, "if") == 0) cur_token.type = TK_IF;
+        else if (strcmp(cur_token.text, "while") == 0) cur_token.type = TK_WHILE;
         else cur_token.type = TK_ID;
     } 
     // 辨識運算符與符號
@@ -175,8 +176,22 @@ void expression(char *res) {
 // 處理陳述句 (Assignment, If, Return)
 // EBNF: statement = if_statement | assignment_statement | return_statement ;
 void statement() {
+    // EBNF: while_statement = "while" "(" expression ")" "{" { statement } "}" ;
+    if (cur_token.type == TK_WHILE) {
+        next_token(); next_token(); // while, (
+        int loop_start = quad_count; // 記錄迴圈條件的起始位置
+        char cond[32]; expression(cond);
+        next_token(); next_token(); // ), {
+        int jmp_idx = quad_count; // 記下 JMP_F 的位置
+        emit("JMP_F", cond, "-", "?"); // 先填問號，等解析完 while 塊再回填
+        while (cur_token.type != TK_RBRACE) statement();
+        next_token(); // }
+        emit("JMP", "-", "-", ""); // 無條件跳回條件判斷
+        sprintf(quads[quad_count - 1].result, "%d", loop_start); // JMP 跳回 loop_start
+        sprintf(quads[jmp_idx].result, "%d", quad_count); // 回填 JMP_F 跳轉地址
+    }
     // EBNF: if_statement  = "if" "(" expression ")" "{" { statement } "}" ;
-    if (cur_token.type == TK_IF) {
+    else if (cur_token.type == TK_IF) {
         next_token(); next_token(); char cond[32]; expression(cond);
         next_token(); next_token(); 
         int jmp_idx = quad_count; // 記下 JMP_F 的位置
@@ -287,6 +302,9 @@ void vm() {
         else if (strcmp(q.op, "STORE") == 0) set_var(q.result, get_var(q.arg1));
         else if (strcmp(q.op, "JMP_F") == 0) { // 條件跳轉：如果條件為 0，PC 跳到目標位置
             if (get_var(q.arg1) == 0) { pc = atoi(q.result) - 1; }
+        }
+        else if (strcmp(q.op, "JMP") == 0) { // 無條件跳轉
+            pc = atoi(q.result) - 1;
         }
         else if (strcmp(q.op, "PARAM") == 0) {
             param_stack[param_sp++] = get_var(q.arg1); // 暫存參數

@@ -212,7 +212,7 @@ class EmoLangEvaluator:
                     user_input = self.input_callback()
                 else:
                     user_input = input()
-            except:
+            except Exception:
                 user_input = ""
 
             res = Value()
