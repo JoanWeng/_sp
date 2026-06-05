@@ -152,3 +152,66 @@ player📌"hp" 🟰 100
 ```
 
 ---
+
+### 7. 加入 LSP 伺服器（已移除）
+
+嘗試為 EmoLang 加入 Language Server Protocol 支援：
+
+**實作的檔案：**
+- `emolang_lsp.py`: LSP 伺服器（stdin/stdout JSON-RPC），支援 `textDocument/didOpen`、`textDocument/didChange`、`textDocument/semanticTokens/full`、`textDocument/hover`、`textDocument/documentSymbol`、`textDocument/completion`
+- `test_lsp.py`: 28 項整合測試
+- `tests/*.emo`: 5 個測試用 EmoLang 檔案
+
+**修改的檔案：**
+- `tokens.py`: Token 加入 `line`、`col`、`length` 欄位；新增 `tokenize()` 便利方法
+- `lexer.py`: 加入位置追蹤（`self.line`、`self.col`）；匯入改為絕對路徑 `from emolang.src.tokens import ...`
+- `parser.py`: 匯入改為絕對路徑 `from emolang.src.tokens import TokenType; from emolang.src.ast import ASTType, ASTNode`
+- `evaluator.py`: 匯入改為絕對路徑 `from emolang.src.lexer import EmoLangLexer`
+
+**關鍵決策：**
+- LSP 伺服器為獨立程序（非內嵌於 GUI），可被任何 LSP 相容編輯器使用
+- LSP 使用 0-based 行號（lexer 提供 1-based → 在 LSP 層減 1）
+- I/O 使用 line-based header 解析 + `read(length)`，避免 pipe deadlock
+
+**最終狀態：** 所有 LSP 相關檔案已移除，回復原始無 LSP 版本。
+
+---
+
+### 8. LSP 伺服器重新實作 + GUI/CLI 強化
+
+重新加入 LSP 伺服器，參考 QiMing LSP 架構，並強化 GUI 與 CLI 功能。
+
+**新增/修改的檔案：**
+- `emolang_lsp.py`: LSP 伺服器（重新實作），新增 `highlight_ansi()` 與 ANSI 色碼
+- `test_lsp.py`: 整合測試（7 項 28 子測試），新增 AST hover 測試與 range 驗證
+- `emolang.py`: 加入 CLI REPL 模式（無 Tkinter 自動降級）、ANSI 語法突顯
+- `emolang/src/ast.py`: ASTNode 新增 `line`、`col` 欄位
+- `emolang/src/parser.py`: `create_node()` 記錄當前 token 位置
+- `emolang/widgets.py`: 無變更
+- `README.md`: 更新目錄結構與執行方式
+
+**LSP 修正：**
+- `_document_symbol`：range 從硬編碼 `{0,0}` 改為 AST 節點實際位置
+- `_hover`：新增 `_find_ast_node_at()` AST 優先搜尋（雙層策略：AST → token fallback）
+
+**GUI 修正：**
+- `ScrolledText` 的 `tabs` 參數修正（`"    "` → `"1c"`，避免 Windows TclError）
+- 語法突顯改用 Tcl/UCS-2 字元計數（`_tcl_col`、`_tcl_len`），修正 emoji surrogate pair 在 Windows Tcl/Tk 的位置偏移
+- 語法突顯改為即時觸發（移除 200ms 延遲）
+- emoji 工具列插入按鈕後立即套用突顯
+
+**CLI 新增：**
+- `run_repl()`：無 Tkinter 時自動啟動終端機 REPL，支援多行區塊與變數持久化
+- `highlight_ansi()`：ANSI 終端機彩色輸出
+
+**色彩配置：** VS Code Dark+ 風格
+| 類別 | 顏色 | 用途 |
+|------|------|------|
+| keyword | `#c586c0` 紫色 | 📦📢🔁🤔🛠️👇👆 等 |
+| variable | `#9cdcfe` 淺藍 | 變數名稱 |
+| function | `#dcdcaa` 黃色 | 函式呼叫 |
+| number | `#b5cea8` 綠色 | 數字常數 |
+| string | `#ce9178` 橘色 | 字串 |
+| operator | `#d69d85` 桃色 | 🟰➕➖✖️➗📈📉 等 |
+
+---

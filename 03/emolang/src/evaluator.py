@@ -1,8 +1,8 @@
-from tokens import TokenType
-from ast import ASTType
-from runtime import Value
-from lexer import EmoLangLexer
-from parser import EmoLangParser
+from emolang.src.tokens import TokenType
+from emolang.src.ast import ASTType
+from emolang.src.runtime import Value
+from emolang.src.lexer import EmoLangLexer
+from emolang.src.parser import EmoLangParser
 
 
 class EmoLangEvaluator:

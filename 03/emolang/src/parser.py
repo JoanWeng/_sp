@@ -1,5 +1,5 @@
-from tokens import TokenType
-from ast import ASTType, ASTNode
+from emolang.src.tokens import TokenType
+from emolang.src.ast import ASTType, ASTNode
 
 
 class EmoLangParser:
@@ -7,7 +7,8 @@ class EmoLangParser:
         self.lexer = lexer
 
     def create_node(self, ast_type):
-        return ASTNode(ast_type)
+        tok = self.lexer.current_token
+        return ASTNode(ast_type, line=tok.line, col=tok.col)
 
     def parse(self):
         self.lexer.advance()

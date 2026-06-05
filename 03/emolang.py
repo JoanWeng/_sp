@@ -2,7 +2,7 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'emolang', 'src'))
+sys.path.insert(0, os.path.dirname(__file__))
 
 try:
     import tkinter as tk
@@ -11,9 +11,16 @@ try:
 except ImportError:
     HAS_TKINTER = False
 
-from evaluator import EmoLangEvaluator
-from completion import CompletionEngine
-from emolang.widgets import ToolTip, GhostText
+from emolang.src.evaluator import EmoLangEvaluator
+from emolang_lsp import highlight_ansi, ANSI_RESET
+
+if HAS_TKINTER:
+    from emolang.src.completion import CompletionEngine
+    from emolang.widgets import ToolTip, GhostText
+    from emolang.src.tokens import TokenType
+    from emolang_lsp import get_tokens, get_semantic_tag, hover_content, SEMANTIC_COLORS
+
+    SEMANTIC_TAG_MAP = {name: {"fg": color} for name, color in SEMANTIC_COLORS.items()}
 
 
 def run_cli(code):
@@ -26,6 +33,50 @@ def run_cli(code):
         print(output)
     except Exception as e:
         print(f"錯誤: {e}")
+
+
+def run_repl():
+    print(f"{ANSI_RESET}{highlight_ansi('# EmoLang 直譯器 v4.0 — 互動模式')}")
+    print(highlight_ansi('# 輸入 emoji 指令，或輸入 exit 離開'))
+    print()
+
+    interpreter = EmoLangEvaluator()
+    interpreter.reset()
+    interpreter.output = []
+    buffer = []
+    brace_depth = 0
+    while True:
+        prompt = "... " if brace_depth > 0 else ">>> "
+        try:
+            line = input(f"{ANSI_RESET}{prompt}")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if line.strip() == "exit":
+            break
+        if not line.strip() and brace_depth == 0:
+            continue
+
+        buffer.append(line)
+        brace_depth += line.count("👇") - line.count("👆")
+
+        if brace_depth == 0 and buffer:
+            code = "\n".join(buffer)
+            buffer = []
+            print(highlight_ansi(code))
+            try:
+                from emolang.src.lexer import EmoLangLexer
+                from emolang.src.parser import EmoLangParser
+                lexer = EmoLangLexer(code)
+                parser = EmoLangParser(lexer)
+                stmts = parser.parse()
+                interpreter.input_callback = input
+                interpreter.execute(stmts)
+                if interpreter.output:
+                    print("\n".join(interpreter.output))
+                    interpreter.output = []
+            except Exception as e:
+                print(f"錯誤: {e}")
 
 
 EMOJI_NAMES = {
@@ -153,16 +204,25 @@ if HAS_TKINTER:
             code_label.pack(anchor=tk.W, padx=10, pady=5)
 
             self.code_text = scrolledtext.ScrolledText(left_frame, font=("Consolas", 11),
-                                                bg="#1e1e1e", fg="#d4d4d4", insertbackground="white")
+                                                bg="#1e1e1e", fg="#d4d4d4", insertbackground="white",
+                                                wrap=tk.NONE, tabs=("1c",))
             self.code_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+            self._setup_tags()
+            self._highlight_after_id = None
+            self._hover_timer_id = None
 
             self.code_text.bind('<KeyRelease>', self.on_key_release)
             self.code_text.bind('<Return>', self.on_enter)
             self.code_text.bind('<Tab>', self.on_tab)
+            self.code_text.bind('<Motion>', self.on_mouse_move)
+            self.code_text.bind('<Leave>', self._on_mouse_leave)
 
-            self.suggestion_bar = tk.Label(left_frame, text="", font=("Consolas", 10),
-                                           bg="#2c3e50", fg="#95a5a6", anchor=tk.W, height=1)
-            self.suggestion_bar.pack(fill=tk.X, padx=10, pady=(0, 5))
+            self._lsp_status = tk.Label(toolbar, text="LSP ●",
+                fg="#4ec9b0", bg="#34495e", font=("Consolas", 9))
+            self._lsp_status.pack(side=tk.RIGHT, padx=8, pady=5)
+
+            self.root.after(100, self._apply_semantic_highlighting)
 
             right_frame = tk.Frame(self.paned, bg="#ecf0f1")
             self.paned.add(right_frame, width=450)
@@ -175,12 +235,110 @@ if HAS_TKINTER:
             self.output_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
             self.input_dialog = None
+            self._hover_tooltip = None
+
+        def _tcl_col(self, line_text, py_col_1based):
+            prefix = line_text[:py_col_1based - 1] if py_col_1based > 0 else ""
+            return sum(2 if ord(c) > 0xFFFF else 1 for c in prefix)
+
+        def _tcl_len(self, s):
+            return sum(2 if ord(c) > 0xFFFF else 1 for c in s)
+
+        def _setup_tags(self):
+            for name, cfg in SEMANTIC_TAG_MAP.items():
+                self.code_text.tag_configure(name, foreground=cfg["fg"])
+            self.code_text.tag_configure("hover_tag", underline=True, underlinefg="#569cd6")
+
+        def _apply_semantic_highlighting(self):
+            code = self.code_text.get("1.0", tk.END)
+            for name in SEMANTIC_TAG_MAP:
+                self.code_text.tag_remove(name, "1.0", tk.END)
+            self.code_text.tag_remove("hover_tag", "1.0", tk.END)
+
+            lines = code.split("\n")
+            tokens = get_tokens(code)
+            for i, tok in enumerate(tokens):
+                if tok.type == TokenType.TOK_EOF:
+                    continue
+                next_type = tokens[i + 1].type if i + 1 < len(tokens) else None
+                tag = get_semantic_tag(tok, next_type)
+                line_text = lines[tok.line - 1] if tok.line - 1 < len(lines) else ""
+                tc = self._tcl_col(line_text, tok.col)
+                tcl_end = tc + self._tcl_len(tok.value)
+                start = f"{tok.line}.{tc}"
+                end = f"{tok.line}.{tcl_end}"
+                try:
+                    self.code_text.tag_add(tag, start, end)
+                except tk.TclError:
+                    pass
+
+        def _find_token_at(self, line, col):
+            code = self.code_text.get("1.0", tk.END)
+            lines = code.split("\n")
+            tokens = get_tokens(code)
+            for tok in tokens:
+                if tok.type == TokenType.TOK_EOF:
+                    continue
+                line_text = lines[tok.line - 1] if tok.line - 1 < len(lines) else ""
+                tc = self._tcl_col(line_text, tok.col)
+                te = tc + self._tcl_len(tok.value)
+                if tok.line == line and tc <= col < te:
+                    return tok
+            return None
+
+        def on_mouse_move(self, event):
+            self.code_text.tag_remove("hover_tag", "1.0", tk.END)
+            if self._hover_tooltip:
+                self._hover_tooltip.destroy()
+                self._hover_tooltip = None
+            if self._hover_timer_id:
+                self.root.after_cancel(self._hover_timer_id)
+                self._hover_timer_id = None
+
+            index = self.code_text.index(f"@{event.x},{event.y}")
+            if not index:
+                return
+            line = int(index.split(".")[0])
+            col = int(index.split(".")[1])
+
+            tok = self._find_token_at(line, col)
+            if tok:
+                code = self.code_text.get("1.0", tk.END)
+                lines = code.split("\n")
+                line_text = lines[tok.line - 1] if tok.line - 1 < len(lines) else ""
+                tc = self._tcl_col(line_text, tok.col)
+                te = tc + self._tcl_len(tok.value)
+                self.code_text.tag_add("hover_tag", f"{line}.{tc}", f"{line}.{te}")
+
+                self._hover_timer_id = self.root.after(
+                    400, lambda t=tok, e=event: self._show_hover_tooltip(t, e))
+
+        def _show_hover_tooltip(self, tok, event):
+            self._hover_timer_id = None
+            content = hover_content(tok)
+            self._hover_tooltip = tk.Toplevel(self.root)
+            self._hover_tooltip.overrideredirect(True)
+            self._hover_tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
+            label = tk.Label(self._hover_tooltip, text=content,
+                           font=("Consolas", 9), bg="#ffffcc", fg="#333",
+                           padx=6, pady=4, relief=tk.SOLID, bd=1)
+            label.pack()
+
+        def _on_mouse_leave(self, event):
+            if self._hover_timer_id:
+                self.root.after_cancel(self._hover_timer_id)
+                self._hover_timer_id = None
+            if self._hover_tooltip:
+                self._hover_tooltip.destroy()
+                self._hover_tooltip = None
+            self.code_text.tag_remove("hover_tag", "1.0", tk.END)
 
         def new_file(self):
             self.code_text.delete(1.0, tk.END)
             self.output_text.config(state='normal')
             self.output_text.delete(1.0, tk.END)
             self.output_text.config(state='disabled')
+            self.root.after(100, self._apply_semantic_highlighting)
 
         def open_file(self):
             filename = filedialog.askopenfilename(filetypes=[("EmoLang 檔案", "*.emo"), ("文字檔", "*.txt"), ("所有檔案", "*.*")])
@@ -188,6 +346,7 @@ if HAS_TKINTER:
                 with open(filename, "r", encoding="utf-8") as f:
                     self.code_text.delete(1.0, tk.END)
                     self.code_text.insert(1.0, f.read())
+                self.root.after(100, self._apply_semantic_highlighting)
 
         def save_file(self):
             filename = filedialog.asksaveasfilename(defaultextension=".emo",
@@ -255,7 +414,7 @@ if HAS_TKINTER:
             self.code_text.focus_set()
             self.remove_ghost()
             self.next_line_suggestion = None
-            self.suggestion_bar.config(text="")
+            self._apply_semantic_highlighting()
             self.root.after(80, self.update_suggestion)
 
         def remove_ghost(self):
@@ -274,7 +433,6 @@ if HAS_TKINTER:
 
             self.remove_ghost()
             self.next_line_suggestion = None
-            self.suggestion_bar.config(text="")
 
             line_sug = CompletionEngine.get_line_suggestion(line_text)
             if line_sug:
@@ -292,7 +450,6 @@ if HAS_TKINTER:
                 next_sug = CompletionEngine.get_next_line_suggestion(all_lines, cursor_line - 1)
                 if next_sug:
                     self.next_line_suggestion = '\n' + next_sug
-                    self.suggestion_bar.config(text=f"Tab: {next_sug}")
 
         def on_key_release(self, event):
             if self._suggestion_timer:
@@ -305,10 +462,10 @@ if HAS_TKINTER:
                                 'Alt_L', 'Alt_R', 'Up', 'Down', 'Left', 'Right',
                                 'Escape', 'Return', 'Tab'):
                 self.next_line_suggestion = None
-                self.suggestion_bar.config(text="")
                 return
 
             self._suggestion_timer = self.root.after(80, self.update_suggestion)
+            self._apply_semantic_highlighting()
 
         def on_enter(self, event):
             return None
@@ -319,13 +476,11 @@ if HAS_TKINTER:
             if self.ghost.label is not None and self.ghost.text_content:
                 self.code_text.insert(tk.INSERT, self.ghost.text_content)
                 self.remove_ghost()
-                self.suggestion_bar.config(text="")
                 return 'break'
 
             if self.next_line_suggestion:
                 self.code_text.insert(tk.INSERT, self.next_line_suggestion)
                 self.next_line_suggestion = None
-                self.suggestion_bar.config(text="")
                 return 'break'
 
             self.code_text.insert(tk.INSERT, '    ')
@@ -341,12 +496,12 @@ if HAS_TKINTER:
 def main():
     if len(sys.argv) > 1:
         if sys.argv[1] == "-i" or sys.argv[1] == "--interactive":
-            if not HAS_TKINTER:
-                print("錯誤: 此環境未安裝 Tkinter")
-                sys.exit(1)
-            root = tk.Tk()
-            app = EmoLangGUI(root)
-            root.mainloop()
+            if HAS_TKINTER:
+                root = tk.Tk()
+                app = EmoLangGUI(root)
+                root.mainloop()
+            else:
+                run_repl()
         else:
             filename = sys.argv[1]
             try:
@@ -365,9 +520,8 @@ def main():
         else:
             print("用法: python emolang.py <filename.emo>")
             print("   或: python emolang.py -i     (使用互動模式)")
-            print("")
-            print("錯誤: 此環境未安裝 Tkinter，無法使用 GUI")
-            sys.exit(1)
+            print()
+            run_repl()
 
 
 if __name__ == "__main__":

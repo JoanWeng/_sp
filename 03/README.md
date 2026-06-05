@@ -18,7 +18,10 @@ EmoLang 是一款結合 **C 語言結構**與 **Python 動態特性**的 Emoji �
 │       ├── lexer.py         # 詞法分析器
 │       ├── parser.py        # 語法分析器
 │       └── evaluator.py     # 執行引擎
-├── emolang.py               # 主程式入口 (GUI + CLI)
+├── emolang.py               # 主程式入口 (GUI + CLI + REPL)
+├── emolang_lsp.py           # LSP 伺服器 (語法突顯、懸停提示、程式碼補全)
+├── test_lsp.py              # LSP 整合測試
+├── tests/                   # EmoLang 測試程式 (.emo)
 └── README.md                # 本檔案
 ```
 
@@ -28,7 +31,7 @@ EmoLang 是一款結合 **C 語言結構**與 **Python 動態特性**的 Emoji �
 
 ### 前置需求
 - Python 3.7+
-- Tkinter (選用，用於 GUI 圖形介面)
+- Tkinter (選用，用於 GUI 圖形介面；無 Tkinter 時自動使用終端機模式)
 
 ### 執行方式
 
@@ -37,18 +40,30 @@ EmoLang 是一款結合 **C 語言結構**與 **Python 動態特性**的 Emoji �
 python emolang.py
 ```
 執行後會開啟圖形介面，包含：
-- 程式碼編輯區
+- 程式碼編輯區（支援 Emoji 語法突顯）
 - 輸出結果區
 - 新建/開啟/儲存/執行/清除按鈕
+- Emoji 工具列（🔄 切換顯示）
 
 #### 2. 命令列模式 (CLI)
 ```bash
 python emolang.py <檔案名稱>
 ```
 
-#### 3. 互動模式
+#### 3. 互動模式 (REPL)
 ```bash
 python emolang.py -i
+```
+在終端機逐行輸入 EmoLang 指令，支援多行區塊與變數持久化：
+```text
+>>> 📢 42
+42
+>>> 🛠️ add(a, b) 👇
+...     🔙 a ➕ b
+... 👆
+>>> 📢 add(3, 4)
+7
+>>> exit
 ```
 
 ---

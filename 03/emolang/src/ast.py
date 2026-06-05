@@ -31,8 +31,10 @@ class ASTType:
 
 
 class ASTNode:
-    def __init__(self, node_type):
+    def __init__(self, node_type, line=0, col=0):
         self.type = node_type
+        self.line = line
+        self.col = col
         self.op = None
         self.name = ""
         self.value = 0

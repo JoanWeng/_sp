@@ -47,6 +47,23 @@ class TokenType:
 
 
 class Token:
-    def __init__(self, type, value):
+    def __init__(self, type, value, line=0, col=0, length=0, char_length=0):
         self.type = type
         self.value = value
+        self.line = line
+        self.col = col
+        self.length = length
+        self.char_length = char_length if char_length > 0 else length
+
+
+def tokenize(code):
+    """便利方法：直接從原始碼產生 Token 列表"""
+    from emolang.src.lexer import EmoLangLexer
+    lexer = EmoLangLexer(code)
+    tokens = []
+    lexer.advance()
+    while lexer.current_token.type != TokenType.TOK_EOF:
+        tokens.append(lexer.current_token)
+        lexer.advance()
+    tokens.append(lexer.current_token)
+    return tokens

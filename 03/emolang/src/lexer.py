@@ -1,10 +1,12 @@
-from tokens import TokenType, Token
+from emolang.src.tokens import TokenType, Token
 
 
 class EmoLangLexer:
     def __init__(self, src):
         self.src = src
         self.pos = 0
+        self.line = 1
+        self.col = 1
         self.current_token = None
 
         self.emoji_keywords = {
@@ -52,8 +54,17 @@ class EmoLangLexer:
         }
 
     def skip_space(self):
-        while self.pos < len(self.src) and self.src[self.pos].isspace():
-            self.pos += 1
+        while self.pos < len(self.src):
+            ch = self.src[self.pos]
+            if ch == '\n':
+                self.line += 1
+                self.col = 1
+                self.pos += 1
+            elif ch.isspace():
+                self.col += 1
+                self.pos += 1
+            else:
+                break
 
     def match_keyword(self):
         for kw in self.emoji_keywords:
@@ -61,62 +72,94 @@ class EmoLangLexer:
                 return kw
         return None
 
+    def _emit(self, tok_type, value, byte_length, char_length=None):
+        tok = Token(tok_type, value, line=self._start_line, col=self._start_col,
+                     length=byte_length, char_length=char_length or byte_length)
+        return tok
+
     def advance(self):
         self.skip_space()
         if self.pos >= len(self.src):
-            self.current_token = Token(TokenType.TOK_EOF, "")
+            self.current_token = Token(TokenType.TOK_EOF, "", line=self.line, col=self.col, length=0)
             return
 
+        self._start_line = self.line
+        self._start_col = self.col
+        start_pos = self.pos
+
         if self.src[self.pos] == '(':
-            self.current_token = Token(TokenType.TOK_LPAREN, "(")
             self.pos += 1
+            self.col += 1
+            self.current_token = self._emit(TokenType.TOK_LPAREN, "(", 1)
             return
         if self.src[self.pos] == ')':
-            self.current_token = Token(TokenType.TOK_RPAREN, ")")
             self.pos += 1
+            self.col += 1
+            self.current_token = self._emit(TokenType.TOK_RPAREN, ")", 1)
             return
         if self.src[self.pos] == ',':
-            self.current_token = Token(TokenType.TOK_COMMA, ",")
             self.pos += 1
+            self.col += 1
+            self.current_token = self._emit(TokenType.TOK_COMMA, ",", 1)
             return
 
         if self.src[self.pos] == '"':
             self.pos += 1
+            self.col += 1
             value = ""
+            byte_len = 1
             while self.pos < len(self.src) and self.src[self.pos] != '"':
-                value += self.src[self.pos]
+                ch = self.src[self.pos]
+                value += ch
+                byte_len += len(ch.encode('utf-8'))
                 self.pos += 1
+                self.col += 1
             if self.pos < len(self.src):
                 self.pos += 1
-            self.current_token = Token(TokenType.TOK_STR, value)
+                self.col += 1
+                byte_len += 1
+            self.current_token = self._emit(TokenType.TOK_STR, value, byte_len, char_length=len(value) + 2)
             return
 
         if self.src[self.pos].isdigit():
             is_float = False
             value = ""
+            byte_len = 0
             while self.pos < len(self.src) and (self.src[self.pos].isdigit() or self.src[self.pos] == '.'):
                 if self.src[self.pos] == '.':
                     is_float = True
-                value += self.src[self.pos]
+                ch = self.src[self.pos]
+                value += ch
+                byte_len += len(ch.encode('utf-8'))
                 self.pos += 1
-            self.current_token = Token(TokenType.TOK_FLOAT_NUM if is_float else TokenType.TOK_NUM, value)
+                self.col += 1
+            self.current_token = self._emit(
+                TokenType.TOK_FLOAT_NUM if is_float else TokenType.TOK_NUM,
+                value, byte_len, char_length=len(value))
             return
 
         kw = self.match_keyword()
         if kw:
-            self.current_token = Token(self.emoji_keywords[kw], kw)
+            byte_len = len(kw.encode('utf-8'))
+            char_len = len(kw)
             self.pos += len(kw)
+            self.col += char_len
+            self.current_token = self._emit(self.emoji_keywords[kw], kw, byte_len, char_length=char_len)
             return
 
         value = ""
+        byte_len = 0
         while self.pos < len(self.src) and not self.src[self.pos].isspace():
             if self.match_keyword():
                 break
             if self.src[self.pos] in '(),':
                 break
-            value += self.src[self.pos]
+            ch = self.src[self.pos]
+            value += ch
+            byte_len += len(ch.encode('utf-8'))
             self.pos += 1
-        self.current_token = Token(TokenType.TOK_ID, value)
+            self.col += 1
+        self.current_token = self._emit(TokenType.TOK_ID, value, byte_len, char_length=len(value))
 
     def eat(self, expected_type):
         if self.current_token.type == expected_type:
