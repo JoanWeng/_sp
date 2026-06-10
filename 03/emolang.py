@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 try:
     import tkinter as tk
-    from tkinter import scrolledtext, filedialog
+    from tkinter import scrolledtext, filedialog, simpledialog
     HAS_TKINTER = True
 except ImportError:
     HAS_TKINTER = False
@@ -152,6 +152,27 @@ if HAS_TKINTER:
 
             self.create_widgets()
             self.ghost = GhostText(self.code_text, font=self.editor_font)
+            self._folded_regions = []
+
+        def _safe_undo(self):
+            try:
+                self.code_text.tag_remove("error_tag", "1.0", tk.END)
+                self._error_msg = None
+                self.code_text.edit_undo()
+                self._apply_semantic_highlighting()
+                self._update_line_numbers()
+            except tk.TclError:
+                pass
+
+        def _safe_redo(self):
+            try:
+                self.code_text.tag_remove("error_tag", "1.0", tk.END)
+                self._error_msg = None
+                self.code_text.edit_redo()
+                self._apply_semantic_highlighting()
+                self._update_line_numbers()
+            except tk.TclError:
+                pass
 
         def create_widgets(self):
             title_frame = tk.Frame(self.root, bg="#2c3e50", height=60)
@@ -179,6 +200,32 @@ if HAS_TKINTER:
 
             btn_clear = tk.Button(toolbar, text="🗑️ 清除", command=self.clear_output, bg="#e74c3c", fg="white")
             btn_clear.pack(side=tk.LEFT, padx=5, pady=5)
+
+            sep1 = tk.Frame(toolbar, width=2, bg="#555555")
+            sep1.pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=5)
+            btn_fold = tk.Button(toolbar, text="📂 摺疊", command=self._fold_all,
+                                 bg="#2c3e50", fg="white", font=("Arial", 8))
+            btn_fold.pack(side=tk.LEFT, padx=2, pady=5)
+            btn_unfold = tk.Button(toolbar, text="📂 展開", command=self._unfold_all,
+                                   bg="#2c3e50", fg="white", font=("Arial", 8))
+            btn_unfold.pack(side=tk.LEFT, padx=2, pady=5)
+
+            sep2 = tk.Frame(toolbar, width=2, bg="#555555")
+            sep2.pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=5)
+            btn_undo = tk.Button(toolbar, text="↩ 復原",
+                                 command=self._safe_undo,
+                                 bg="#2c3e50", fg="white", font=("Arial", 8))
+            btn_undo.pack(side=tk.LEFT, padx=2, pady=5)
+            btn_redo = tk.Button(toolbar, text="↪ 重做",
+                                 command=self._safe_redo,
+                                 bg="#2c3e50", fg="white", font=("Arial", 8))
+            btn_redo.pack(side=tk.LEFT, padx=2, pady=5)
+
+            sep3 = tk.Frame(toolbar, width=2, bg="#555555")
+            sep3.pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=5)
+            btn_errors = tk.Button(toolbar, text="⚠ 錯誤", command=self._show_diagnostics,
+                                   bg="#c0392b", fg="white", font=("Arial", 8))
+            btn_errors.pack(side=tk.LEFT, padx=2, pady=5)
 
             self.emoji_toggle = tk.Button(toolbar, text="🔣", command=self.toggle_emoji,
                                            bg="#8e44ad", fg="white", font=("Arial", 10), width=3)
@@ -230,10 +277,28 @@ if HAS_TKINTER:
             outline_frame.grid(row=1, column=0, sticky="ns", padx=(10, 5), pady=5)
             outline_frame.grid_propagate(False)
 
-            self.code_text = scrolledtext.ScrolledText(left_frame, font=self.editor_font,
-                                                bg="#1e1e1e", fg="#d4d4d4", insertbackground="white",
-                                                wrap=tk.NONE, tabs=("1c",))
-            self.code_text.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=5)
+            code_container = tk.Frame(left_frame, bg="#1e1e1e")
+            code_container.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=5)
+            code_container.grid_columnconfigure(1, weight=1)
+            code_container.grid_rowconfigure(0, weight=1)
+
+            self.line_numbers = tk.Text(code_container, width=6, font=self.editor_font,
+                                         bg="#252526", fg="#858585", relief=tk.FLAT,
+                                         state='disabled', wrap=tk.NONE, padx=4, cursor="arrow",
+                                         highlightthickness=0, borderwidth=0,
+                                         yscrollcommand=lambda *a: None)
+            self.line_numbers.grid(row=0, column=0, sticky="ns")
+
+            self.code_text = tk.Text(code_container, font=self.editor_font,
+                                     bg="#1e1e1e", fg="#d4d4d4", insertbackground="white",
+                                     wrap=tk.NONE, tabs=("1c",), undo=True,
+                                     maxundo=-1,
+                                     yscrollcommand=self._sync_line_numbers_scroll,
+                                     highlightthickness=0, borderwidth=0)
+            self.code_text.grid(row=0, column=1, sticky="nsew")
+
+            self.code_scrollbar = tk.Scrollbar(code_container, command=self._on_code_scroll)
+            self.code_scrollbar.grid(row=0, column=2, sticky="ns")
 
             self._error_label = tk.Label(left_frame, text="✔ 就緒", font=("Consolas", 9),
                                         bg="#1e1e1e", fg="#6a9955", anchor=tk.W, padx=10)
@@ -265,6 +330,21 @@ if HAS_TKINTER:
             self.code_text.bind('<F12>', self._go_to_definition)
             self.root.bind('<Control-g>', lambda e: self._go_to_definition())
             self.code_text.bind('<Control-g>', lambda e: self._go_to_definition())
+            self.code_text.bind('<F2>', self._rename_symbol)
+            self.root.bind('<F2>', lambda e: self._rename_symbol())
+            self.code_text.bind('<Control-Shift-F>', self._show_references)
+            self.root.bind('<Control-Shift-F>', lambda e: self._show_references())
+            self.code_text.bind('<MouseWheel>', self._on_code_mousewheel)
+            self.code_text.bind('<Button-4>', self._on_code_mousewheel)
+            self.code_text.bind('<Button-5>', self._on_code_mousewheel)
+            self.line_numbers.bind('<MouseWheel>', self._on_line_numbers_mousewheel)
+            self.line_numbers.bind('<Button-4>', self._on_line_numbers_mousewheel)
+            self.line_numbers.bind('<Button-5>', self._on_line_numbers_mousewheel)
+            self.code_text.bind('<KeyPress>', self._on_code_keypress, add='+')
+            self.code_text.bind('<Control-z>', lambda e: self._safe_undo() or "break")
+            self.root.bind('<Control-z>', lambda e: self._safe_undo() or "break")
+            self.code_text.bind('<Control-y>', lambda e: self._safe_redo() or "break")
+            self.root.bind('<Control-y>', lambda e: self._safe_redo() or "break")
 
             self.root.after(100, self._apply_semantic_highlighting)
 
@@ -293,6 +373,55 @@ if HAS_TKINTER:
                 self.code_text.tag_configure(name, foreground=cfg["fg"])
             self.code_text.tag_configure("hover_tag", underline=True, underlinefg="#569cd6")
             self.code_text.tag_configure("error_tag", foreground="#f44747", background="#3a1a1a", underline=True)
+            self.code_text.tag_configure("fold_marker", foreground="#6a9955")
+            self.code_text.tag_bind("fold_marker", "<Button-1>", self._on_fold_click)
+            self._update_line_numbers()
+
+        def _sync_line_numbers_scroll(self, *args):
+            self.code_scrollbar.set(*args)
+            if args:
+                try:
+                    self.line_numbers.yview_moveto(float(args[0]))
+                except tk.TclError:
+                    pass
+
+        def _on_code_scroll(self, *args):
+            self.code_text.yview(*args)
+            self.line_numbers.yview(*args)
+
+        def _on_code_mousewheel(self, event):
+            if event.num == 4:
+                self.code_text.yview_scroll(-3, "units")
+                self.line_numbers.yview_scroll(-3, "units")
+            elif event.num == 5:
+                self.code_text.yview_scroll(3, "units")
+                self.line_numbers.yview_scroll(3, "units")
+            else:
+                delta = -1 if event.delta > 0 else 1
+                self.code_text.yview_scroll(delta * 3, "units")
+                self.line_numbers.yview_scroll(delta * 3, "units")
+            return "break"
+
+        def _on_code_keypress(self, event):
+            self.root.after_idle(self._sync_line_numbers_after_key)
+
+        def _sync_line_numbers_after_key(self):
+            try:
+                frac = self.code_text.yview()[0]
+                self.line_numbers.yview_moveto(frac)
+            except tk.TclError:
+                pass
+
+        def _on_line_numbers_mousewheel(self, event):
+            self._on_code_mousewheel(event)
+
+        def _update_line_numbers(self):
+            self.line_numbers.config(state='normal')
+            self.line_numbers.delete("1.0", tk.END)
+            count = int(self.code_text.index(tk.END).split(".")[0]) - 1
+            nums = "\n".join(str(i) for i in range(1, count + 1))
+            self.line_numbers.insert("1.0", nums)
+            self.line_numbers.config(state='disabled')
 
         def _apply_semantic_highlighting(self):
             code = self.code_text.get("1.0", tk.END)
@@ -303,36 +432,42 @@ if HAS_TKINTER:
 
             try:
                 lines = code.split("\n")
-                tokens = get_tokens(code)
 
-                # Diagnostics — capture syntax errors
-                self._error_msg = None
-                try:
-                    lexer = EmoLangLexer(code)
-                    parser = EmoLangParser(lexer)
-                    parser.parse()
-                except RuntimeError as e:
-                    tok = getattr(lexer, 'current_token', None)
-                    if tok and tok.type == TokenType.TOK_EOF:
-                        for t in reversed(tokens):
-                            if t.type != TokenType.TOK_EOF:
-                                tok = t
-                                break
-                    if tok and tok.type != TokenType.TOK_EOF and tok.line > 0 and tok.line <= len(lines):
-                        line_text = lines[tok.line - 1]
-                        if tok.col > 0 and tok.col <= len(line_text):
-                            tc = self._tcl_col(line_text, tok.col)
-                            token_src = line_text[tok.col - 1 : tok.col - 1 + max(tok.char_length, 1)]
-                            if token_src:
-                                tcl_end = tc + sum(2 if ord(c) > 0xFFFF else 1 for c in token_src)
-                                try:
-                                    self.code_text.tag_add("error_tag", f"{tok.line}.{tc}", f"{tok.line}.{tcl_end}")
-                                except tk.TclError:
-                                    pass
-                    self._error_msg = str(e)
-                except Exception as e:
-                    self._error_msg = str(e)
+                # Diagnostics — single pass with error-tolerant parser
+                self._all_errors = []
+                lexer = EmoLangLexer(code)
+                parser = EmoLangParser(lexer)
+                parser.diag_parse()
+                seen_lines = set()
+                for rel_line, msg in parser.diag_errors:
+                    if rel_line > 0 and rel_line not in seen_lines and len(self._all_errors) < 5:
+                        seen_lines.add(rel_line)
+                        self._all_errors.append((rel_line, msg))
+
+                # Mark error lines in the editor
+                for err_line, _ in self._all_errors:
+                    if err_line > 0 and err_line <= len(lines):
+                        try:
+                            self.code_text.tag_add("error_tag", f"{err_line}.0", f"{err_line}.0 lineend")
+                        except tk.TclError:
+                            pass
+
+                if self._all_errors:
+                    count = len(self._all_errors)
+                    if count == 1:
+                        self._error_msg = self._all_errors[0][1]
+                    else:
+                        self._error_msg = f"⚠ 發現 {count} 個語法錯誤: " + "; ".join(msg for _, msg in self._all_errors[:3])
+                        if count > 3:
+                            self._error_msg += " ..."
+                else:
+                    self._error_msg = None
                 self._update_error_label()
+
+                try:
+                    tokens = get_tokens(code)
+                except RuntimeError:
+                    tokens = []
 
                 for tok in tokens:
                     if tok.type == TokenType.TOK_EOF:
@@ -361,12 +496,49 @@ if HAS_TKINTER:
                 msg = f"[HL error] {e}"
                 print(msg, file=sys.stderr)
                 self._debug_label.config(text=msg)
+                self._update_error_label()
 
         def _update_error_label(self):
-            if self._error_msg:
+            if hasattr(self, '_all_errors') and self._all_errors:
+                count = len(self._all_errors)
+                if count == 1:
+                    self._error_label.config(text=f"⚠ {self._all_errors[0][1]}", fg="#f44747")
+                else:
+                    self._error_label.config(text=f"⚠ 發現 {count} 個語法錯誤", fg="#f44747")
+            elif self._error_msg:
                 self._error_label.config(text=f"⚠ {self._error_msg}", fg="#f44747")
             else:
                 self._error_label.config(text="✔ 無語法錯誤", fg="#6a9955")
+
+        def _show_diagnostics(self):
+            errors = getattr(self, '_all_errors', [])
+            if not errors and self._error_msg:
+                errors = [(0, self._error_msg)]
+
+            win = tk.Toplevel(self.root)
+            win.title("⚠ 診斷結果")
+            win.geometry("500x300")
+            win.configure(bg="#252526")
+            label = tk.Label(win, text=f"找到 {len(errors)} 個錯誤",
+                             bg="#252526", fg="#cccccc", font=("Arial", 10))
+            label.pack(pady=(10, 0))
+            lb = tk.Listbox(win, bg="#1e1e1e", fg="#e06c75",
+                            font=("Consolas", 10), selectbackground="#264f78")
+            lb.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            for line, msg in errors:
+                lb.insert(tk.END, f"  line {line}: {msg}")
+
+            def on_select(ev):
+                sel = lb.curselection()
+                if sel and sel[0] < len(errors):
+                    line = errors[sel[0]][0]
+                    if line > 0:
+                        self.code_text.see(f"{line}.0")
+                        self.code_text.mark_set(tk.INSERT, f"{line}.0")
+                        self.code_text.focus_set()
+                        win.destroy()
+            if errors:
+                lb.bind("<<ListboxSelect>>", on_select)
 
         def _schedule_outline_update(self):
             if self._outline_timer_id:
@@ -416,18 +588,21 @@ if HAS_TKINTER:
                     pass
 
         def _find_token_at(self, line, col):
-            code = self.code_text.get("1.0", tk.END)
-            lines = code.split("\n")
-            tokens = get_tokens(code)
-            for tok in tokens:
-                if tok.type == TokenType.TOK_EOF:
-                    continue
-                line_text = lines[tok.line - 1] if tok.line - 1 < len(lines) else ""
-                tc = self._tcl_col(line_text, tok.col)
-                token_src = line_text[tok.col - 1 : tok.col - 1 + tok.char_length]
-                te = tc + sum(2 if ord(c) > 0xFFFF else 1 for c in token_src)
-                if tok.line == line and tc <= col < te:
-                    return tok
+            try:
+                code = self.code_text.get("1.0", tk.END)
+                lines = code.split("\n")
+                tokens = get_tokens(code)
+                for tok in tokens:
+                    if tok.type == TokenType.TOK_EOF:
+                        continue
+                    line_text = lines[tok.line - 1] if tok.line - 1 < len(lines) else ""
+                    tc = self._tcl_col(line_text, tok.col)
+                    token_src = line_text[tok.col - 1 : tok.col - 1 + tok.char_length]
+                    te = tc + sum(2 if ord(c) > 0xFFFF else 1 for c in token_src)
+                    if tok.line == line and tc <= col < te:
+                        return tok
+            except RuntimeError:
+                pass
             return None
 
         def on_mouse_move(self, event):
@@ -528,22 +703,186 @@ if HAS_TKINTER:
                 self._debug_label.config(text=f"F12 error: {e}")
                 return None
 
+        def _get_folding_ranges(self):
+            code = self.code_text.get("1.0", tk.END)
+            tokens = get_tokens(code)
+            brace_stack = []
+            ranges = []
+            for tok in tokens:
+                if tok.type == TokenType.TOK_LBRACE:
+                    brace_stack.append(tok.line)
+                elif tok.type == TokenType.TOK_RBRACE:
+                    if brace_stack:
+                        start = brace_stack.pop()
+                        end = tok.line
+                        if not brace_stack and end > start:
+                            ranges.append((start, end))
+            return ranges
+
+        def _fold_all(self, event=None):
+            if self._folded_regions:
+                return
+            ranges = self._get_folding_ranges()
+            ranges.sort(key=lambda r: r[0], reverse=True)
+            folded = []
+            for start, end in ranges:
+                idx = f"{start+1}.0"
+                end_idx = f"{end+1}.0"
+                text = self.code_text.get(idx, end_idx)
+                if text.strip():
+                    self.code_text.delete(idx, end_idx)
+                    uid = id(text) & 0xFFFF
+                    marker = f"  … 👆 ({end-start} lines) [#{uid:04x}]  \n"
+                    self.code_text.insert(idx, marker)
+                    self.code_text.tag_add("fold_marker", idx, f"{int(idx.split('.')[0])+1}.0")
+                    folded.append((text, marker.rstrip()))
+            self._folded_regions = folded
+            if folded:
+                self._debug_label.config(text=f"📂 已摺疊 {len(folded)} 個區塊，按「展開」或點擊標記還原")
+            self._update_line_numbers()
+
+        def _unfold_all(self, event=None):
+            for text, marker in self._folded_regions:
+                pos = self.code_text.search(marker, tk.END, backwards=True)
+                if pos:
+                    line = int(pos.split(".")[0])
+                    self.code_text.delete(f"{line}.0", f"{line+1}.0")
+                    self.code_text.insert(f"{line}.0", text)
+            self._folded_regions = []
+            self._apply_semantic_highlighting()
+            self._debug_label.config(text="📂 已展開全部區塊")
+            self._update_line_numbers()
+
+        def _unfold_marker_at_line(self, line):
+            for i, (text, marker) in enumerate(self._folded_regions):
+                pos = self.code_text.search(marker, f"{line}.0", f"{line+1}.0")
+                if pos:
+                    self.code_text.delete(f"{line}.0", f"{line+1}.0")
+                    self.code_text.insert(f"{line}.0", text)
+                    self._folded_regions.pop(i)
+                    self._apply_semantic_highlighting()
+                    self._update_line_numbers()
+                    return True
+            return False
+
+        def _on_fold_click(self, event):
+            index = self.code_text.index(f"@{event.x},{event.y}")
+            if index:
+                line = int(index.split(".")[0])
+                if self._unfold_marker_at_line(line):
+                    self._debug_label.config(text=f"📂 已展開 line {line}")
+            return "break"
+
+        def _get_all_id_tokens(self):
+            code = self.code_text.get("1.0", tk.END)
+            tokens = get_tokens(code)
+            id_tokens = {}
+            for tok in tokens:
+                if tok.type == TokenType.TOK_ID:
+                    id_tokens.setdefault(tok.value, []).append(tok)
+            return id_tokens
+
+        def _show_references(self, event=None):
+            try:
+                cursor = self.code_text.index(tk.INSERT)
+                line = int(cursor.split(".")[0])
+                col = int(cursor.split(".")[1])
+                tok = self._find_token_at(line, col)
+                if not tok or tok.type != TokenType.TOK_ID:
+                    self._debug_label.config(text="Ctrl+Shift+F: 游標不在識別字上")
+                    return None
+                id_tokens = self._get_all_id_tokens()
+                refs = id_tokens.get(tok.value, [])
+                if not refs:
+                    self._debug_label.config(text=f"'{tok.value}': 無任何參照")
+                    return None
+                win = tk.Toplevel(self.root)
+                win.title(f"參照: {tok.value}")
+                win.geometry("400x250")
+                win.configure(bg="#252526")
+                lb = tk.Listbox(win, bg="#1e1e1e", fg="#d4d4d4",
+                                font=("Consolas", 10), selectbackground="#264f78")
+                lb.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+                for t in refs:
+                    lb.insert(tk.END, f"  line {t.line}:{t.col}  {t.value}")
+                def on_select(ev):
+                    sel = lb.curselection()
+                    if sel:
+                        t = refs[sel[0]]
+                        lines = self.code_text.get("1.0", tk.END).split("\n")
+                        line_text = lines[t.line - 1] if t.line - 1 < len(lines) else ""
+                        tc = self._tcl_col(line_text, t.col)
+                        self.code_text.see(f"{t.line}.{tc}")
+                        self.code_text.mark_set(tk.INSERT, f"{t.line}.{tc}")
+                        self.code_text.focus_set()
+                        win.destroy()
+                lb.bind("<<ListboxSelect>>", on_select)
+                self._debug_label.config(text=f"Ctrl+Shift+F: '{tok.value}' → {len(refs)} 個參照")
+                return "break"
+            except Exception as e:
+                self._debug_label.config(text=f"references error: {e}")
+                return None
+
+        def _rename_symbol(self, event=None):
+            try:
+                cursor = self.code_text.index(tk.INSERT)
+                line = int(cursor.split(".")[0])
+                col = int(cursor.split(".")[1])
+                tok = self._find_token_at(line, col)
+                if not tok or tok.type != TokenType.TOK_ID:
+                    self._debug_label.config(text="F2: 游標不在識別字上")
+                    return None
+                new_name = simpledialog.askstring(
+                    "重新命名", f"將「{tok.value}」重新命名為：",
+                    parent=self.root, initialvalue=tok.value)
+                if not new_name or new_name == tok.value:
+                    return None
+                id_tokens = self._get_all_id_tokens()
+                refs = id_tokens.get(tok.value, [])
+                if not refs:
+                    return None
+                if self._folded_regions:
+                    self._unfold_all()
+                self.code_text.edit_separator()
+                for t in reversed(refs):
+                    self.code_text.edit_separator()
+                    lines = self.code_text.get("1.0", tk.END).split("\n")
+                    line_text = lines[t.line - 1] if t.line - 1 < len(lines) else ""
+                    tc = self._tcl_col(line_text, t.col)
+                    te = tc + sum(2 if ord(c) > 0xFFFF else 1 for c in t.value)
+                    self.code_text.delete(f"{t.line}.{tc}", f"{t.line}.{te}")
+                    self.code_text.insert(f"{t.line}.{tc}", new_name)
+                self._apply_semantic_highlighting()
+                self._schedule_outline_update()
+                self._update_line_numbers()
+                self.code_text.edit_separator()
+                self._debug_label.config(text=f"F2: '{tok.value}' → '{new_name}' ({len(refs)} 處)")
+                return "break"
+            except Exception as e:
+                self._debug_label.config(text=f"rename error: {e}")
+                return None
+
         def new_file(self):
+            self._unfold_all()
             self.code_text.delete(1.0, tk.END)
+            self.code_text.edit_reset()
             self.output_text.config(state='normal')
             self.output_text.delete(1.0, tk.END)
             self.output_text.config(state='disabled')
             self.root.after(100, self._apply_semantic_highlighting)
             self._schedule_outline_update()
+            self._update_line_numbers()
 
         def open_file(self):
             filename = filedialog.askopenfilename(filetypes=[("EmoLang 檔案", "*.emo"), ("文字檔", "*.txt"), ("所有檔案", "*.*")])
             if filename:
+                self._unfold_all()
                 with open(filename, "r", encoding="utf-8") as f:
                     self.code_text.delete(1.0, tk.END)
                     self.code_text.insert(1.0, f.read())
                 self.root.after(100, self._apply_semantic_highlighting)
                 self._schedule_outline_update()
+                self._update_line_numbers()
 
         def save_file(self):
             filename = filedialog.asksaveasfilename(defaultextension=".emo",
@@ -607,12 +946,15 @@ if HAS_TKINTER:
                 self.emoji_visible = True
 
         def insert_emoji(self, emoji):
+            self.code_text.edit_separator()
             self.code_text.insert(tk.INSERT, emoji)
+            self.code_text.edit_separator()
             self.code_text.focus_set()
             self.remove_ghost()
             self.next_line_suggestion = None
             self._apply_semantic_highlighting()
             self._schedule_outline_update()
+            self._update_line_numbers()
             self.root.after(80, self.update_suggestion)
 
         def remove_ghost(self):
@@ -665,6 +1007,7 @@ if HAS_TKINTER:
             self._suggestion_timer = self.root.after(80, self.update_suggestion)
             self._apply_semantic_highlighting()
             self._schedule_outline_update()
+            self._update_line_numbers()
 
         def on_enter(self, event):
             return None

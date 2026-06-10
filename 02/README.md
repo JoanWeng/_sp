@@ -7,8 +7,11 @@
 gcc src/*.c -I include -o emolang
 ```
 
-執行自己的程式碼:
-./emolang 你的腳本(檔名要.emo)
+## 執行自己的程式碼:
+
+```bash
+./emolang 你的腳本.emo
+```
 
 # 以下是 EmoLang 與 C 語言、Python 在系統架構與語言特性上的對比概要：
 

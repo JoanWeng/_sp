@@ -295,15 +295,44 @@ player📌"hp" 🟰 100
   - `GhostText.__init__`: 新增 `font` 參數，預設保留 `("Consolas", 11)`
   - `GhostText.show`: 使用自訂字型
 
-**LSP 未完成功能清單（依建議實作順序）：**
-1. diagnostics — 語法錯誤診斷 (`publishDiagnostics`)
-2. didClose / didSave — 文件生命週期補完
-3. go to definition — 跳至定義
-4. find references — 尋找引用
-5. rename — 重新命名符號
-6. foldingRange — 程式碼折疊
-7. signatureHelp — 函式參數提示
-8. formatting — 自動排版
-9. codeAction — 快速修復
-
 ---
+
+### 12. 程式碼摺疊、重新命名、參考查詢、行號 (2026.06.10)
+
+**新增功能：**
+
+| 功能 | 觸發方式 | 說明 |
+|------|----------|------|
+| 全部摺疊 | 工具列 `🔽` 按鈕 | 將所有頂層區塊（函數/if/else/for/while/struct 主體）摺疊為一行標記 |
+| 全部展開 | 工具列 `🔼` 按鈕 | 展開所有已摺疊區塊 |
+| 單擊展開 | 點擊摺疊標記 | 點擊 `  … 👆 (N lines) [#XXXX]  ` 即可展開該區塊 |
+| 重新命名 | `F2` | 將檔案內所有同名的識別字重新命名 |
+| 查詢參考 | `Ctrl+Shift+F` | 彈出視窗顯示所有參考位置，點擊跳轉 |
+| 跳至定義 | `F12` / `Ctrl+G` | 游標跳到該符號的定義位置 |
+| 行號 | 編輯器左側 | 即時更新的行號，隨摺疊/展開自動同步 |
+
+**實作細節：**
+
+- **摺疊機制：** `_get_folding_ranges()` 回傳僅頂層 `{ … }` 配對範圍（brace stack 歸零才算）。`_fold_all()` 從最底部開始反向刪除（`reverse=True`），每區塊替換成唯一標記 `  … 👆 (N lines) [#uid]  \n`，其中 `uid = id(text) & 0xFFFF`。`_folded_regions` 儲存 `(原始文字, 標記文字)` 元組串列。
+- **展開機制：** `_unfold_all()` 使用 `search(marker, tk.END, backwards=True)` 從文件底部往回找每個標記並還原。`_unfold_marker_at_line()` 使用 `search(marker, f"{line}.0", f"{line+1}.0")` 在指定行範圍內尋找。
+- **摺疊標記點擊：** `fold_marker` tag 綁定 `<Button-1>` → `_on_fold_click` 取得點擊行號 → `_unfold_marker_at_line`。
+- **重新命名：** `_get_all_id_tokens()` 收集檔案中所有 `TOK_ID` token，按值分組。`_rename_symbol` 先展開所有摺疊區塊，再從最後一處開始反向取代（避免行號位移）。
+- **參考查詢：** 同上收集 ID token，在彈出視窗 `tk.Listbox` 中列出，點擊跳轉。
+- **跳至定義：** `_get_def_map()` 解析 AST 取得 `LET` / `FUNC_DEF` 節點的定義 token，`_go_to_definition` 搜尋該名稱在定義行的第一個出現位置。
+- **行號：** `ScrolledText` 改為 `tk.Text` + 自訂 `Scrollbar`。左側 `line_numbers` Text widget（寬度 6，唯讀）與 `code_text` 共用同一 scrollbar，透過 `yview` 和 `_on_code_mousewheel` 同步。`_update_line_numbers()` 計算 `code_text` 總行數並寫入。
+
+**Bug 修復：**
+
+1. `tag_configure` font 參數格式錯誤：傳入 `("Consolas", 11)` 而非 `self.editor_font` → 修正為直接傳入字型物件。
+2. 雙重點擊摺疊按鈕導致 region 丟失：`_fold_all()` 開頭檢查 `self._folded_regions` 若非空則直接返回。
+3. 嵌入式視窗方案引發 AttributeError：改用純文字標記 + `search()`。
+4. 連續相同層級區塊（如 `if/else if/else`）摺疊標記文字相同導致 `search()` 誤配：每個標記加入唯一 `[#XXXX]` hex ID。
+5. 展開時錯亂：`search(marker, tk.END, backwards=True)` 確保從底部往回匹配，還原後程式碼順序正確。
+6. `mark_gravity` 參數類型錯誤：`tk.LEFT` → `"left"`。
+7. `state='disabled'` 凍結編輯器：改用 `state='normal'` 搭配唯讀 line_numbers widget。
+
+**修改的檔案：**
+- `emolang.py`: 新增 `_get_folding_ranges`, `_fold_all`, `_unfold_all`, `_unfold_marker_at_line`, `_on_fold_click`, `_get_all_id_tokens`, `_show_references`, `_rename_symbol`, `_get_def_map`, `_go_to_definition`, `_update_line_numbers`, `_sync_line_numbers_scroll`, `_on_code_scroll`, `_on_code_mousewheel`；編輯區從 `ScrolledText` 改為 `tk.Text + Scrollbar`；`new_file` / `open_file` / `insert_emoji` / `on_key_release` 加入 `_update_line_numbers()` 呼叫
+- `emolang_lsp.py`: 無變更
+- `test_lsp.py`: 無變更
+

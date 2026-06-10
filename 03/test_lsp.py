@@ -636,6 +636,212 @@ def test_go_to_definition():
     client.stop()
 
 
+def test_folding_range():
+    client = LSPClient("emolang_lsp.py").start()
+    client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    client.recv()
+
+    code = """📦 x 🟰 1
+🛠️ add(a, b) 👇
+    🔙 a ➕ b
+👆
+🤔 x 🟰 1 👇
+    📢 x
+👆
+🔁 x 🟰 1 👇
+    📢 x
+👆
+"""
+    client.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///test.emo",
+                "languageId": "emo",
+                "version": 1,
+                "text": code
+            }
+        }
+    })
+
+    client.send({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "textDocument/foldingRange",
+        "params": {"textDocument": {"uri": "file:///test.emo"}}
+    })
+    resp = client.recv()
+    assert resp is not None
+    ranges = resp["result"]
+    assert len(ranges) >= 3, f"應有至少 3 個摺疊範圍，但得 {len(ranges)}"
+    for r in ranges:
+        assert r["startLine"] < r["endLine"], f"摺疊範圍無效: {r}"
+    print(f"  ✓ foldingRange ({len(ranges)} 個範圍): {ranges}")
+    client.stop()
+
+
+def test_references():
+    client = LSPClient("emolang_lsp.py").start()
+    client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    client.recv()
+
+    code = "📦 x 🟰 10\n📢 x\nx 🟰 20\n📢 x\n"
+    client.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///test.emo",
+                "languageId": "emo",
+                "version": 1,
+                "text": code
+            }
+        }
+    })
+
+    client.send({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": {"uri": "file:///test.emo"},
+            "position": {"line": 1, "character": 2},
+            "context": {"includeDeclaration": True}
+        }
+    })
+    resp = client.recv()
+    assert resp is not None
+    refs = resp["result"]
+    assert len(refs) == 4, f"應有 4 個參考，但得 {len(refs)}"
+    print(f"  ✓ references (4 個位置): {[r['range']['start']['line'] for r in refs]}")
+
+    client.send({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": {"uri": "file:///test.emo"},
+            "position": {"line": 1, "character": 2},
+            "context": {"includeDeclaration": False}
+        }
+    })
+    resp = client.recv()
+    assert resp is not None
+    refs_no_decl = resp["result"]
+    assert len(refs_no_decl) == 3, f"排除宣告後應有 3 個，但得 {len(refs_no_decl)}"
+    print(f"  ✓ references (排除宣告後 {len(refs_no_decl)} 個)")
+    client.stop()
+
+
+def test_prepare_rename():
+    client = LSPClient("emolang_lsp.py").start()
+    client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    client.recv()
+
+    code = "📦 x 🟰 10\n📢 x\n"
+    client.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///test.emo",
+                "languageId": "emo",
+                "version": 1,
+                "text": code
+            }
+        }
+    })
+
+    client.send({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "textDocument/prepareRename",
+        "params": {
+            "textDocument": {"uri": "file:///test.emo"},
+            "position": {"line": 0, "character": 2}
+        }
+    })
+    resp = client.recv()
+    assert resp is not None
+    result = resp["result"]
+    assert result is not None, "prepare rename 應回傳範圍"
+    assert "placeholder" in result
+    assert result["placeholder"] == "x"
+    print(f"  ✓ prepareRename: {result}")
+
+    client.send({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "textDocument/prepareRename",
+        "params": {
+            "textDocument": {"uri": "file:///test.emo"},
+            "position": {"line": 0, "character": 0}
+        }
+    })
+    resp = client.recv()
+    assert resp is not None
+    assert resp["result"] is None, "關鍵字應回傳 null"
+    print(f"  ✓ prepareRename on keyword → null")
+    client.stop()
+
+
+def test_rename():
+    client = LSPClient("emolang_lsp.py").start()
+    client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    client.recv()
+
+    code = "📦 x 🟰 10\n📢 x\nx 🟰 20\n"
+    client.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///test.emo",
+                "languageId": "emo",
+                "version": 1,
+                "text": code
+            }
+        }
+    })
+
+    client.send({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "textDocument/rename",
+        "params": {
+            "textDocument": {"uri": "file:///test.emo"},
+            "position": {"line": 0, "character": 2},
+            "newName": "y"
+        }
+    })
+    resp = client.recv()
+    assert resp is not None
+    edit = resp["result"]
+    assert edit is not None
+    changes = edit["changes"]["file:///test.emo"]
+    assert len(changes) == 3, f"應有 3 個編輯，但得 {len(changes)}"
+    for change in changes:
+        assert change["newText"] == "y"
+    print(f"  ✓ rename (3 個編輯點)")
+
+    client.send({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "textDocument/rename",
+        "params": {
+            "textDocument": {"uri": "file:///test.emo"},
+            "position": {"line": 0, "character": 0},
+            "newName": "y"
+        }
+    })
+    resp = client.recv()
+    assert resp is not None
+    assert resp["result"] is None, "關鍵字 rename 應回傳 null"
+    print(f"  ✓ rename on keyword → null")
+    client.stop()
+
+
 def main():
     tests = [
         ("initialize", test_initialize),
@@ -648,6 +854,10 @@ def main():
         ("didSave", test_did_save),
         ("didClose", test_did_close),
         ("go to definition", test_go_to_definition),
+        ("foldingRange", test_folding_range),
+        ("references", test_references),
+        ("prepareRename", test_prepare_rename),
+        ("rename", test_rename),
         ("tests/*.emo 檔案", test_file_tests),
     ]
 

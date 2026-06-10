@@ -1,5 +1,5 @@
 > 本專案由opencode撰寫，參考ccckmit的08-comment_v1目錄
-  [網址](https://github.com/ccc114b/cpu2os/tree/master/02-%E7%B3%BB%E7%B5%B1%E7%A8%8B%E5%BC%8F/_books/_code/02-compiler/08-comment_v1)
+  [參考資料](https://github.com/ccc114b/cpu2os/tree/master/02-%E7%B3%BB%E7%B5%B1%E7%A8%8B%E5%BC%8F/_books/_code/02-compiler/08-comment_v1)
 
 # p0 編譯器與虛擬機
 

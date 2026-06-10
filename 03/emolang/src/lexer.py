@@ -109,6 +109,28 @@ class EmoLangLexer:
             value = ""
             byte_len = 1
             while self.pos < len(self.src) and self.src[self.pos] != '"':
+                if self.src[self.pos] == '\n':
+                    raise RuntimeError(f"第 {self.line} 行: 字串未閉合（跨行字串不允許）")
+                if self.src[self.pos] == '\\' and self.pos + 1 < len(self.src):
+                    next_ch = self.src[self.pos + 1]
+                    if next_ch == 'n':
+                        value += '\n'
+                        byte_len += len('\\n'.encode('utf-8'))
+                        self.pos += 2
+                        self.col += 2
+                        continue
+                    elif next_ch == '\\':
+                        value += '\\'
+                        byte_len += len('\\\\'.encode('utf-8'))
+                        self.pos += 2
+                        self.col += 2
+                        continue
+                    elif next_ch == '"':
+                        value += '"'
+                        byte_len += len('\\"'.encode('utf-8'))
+                        self.pos += 2
+                        self.col += 2
+                        continue
                 ch = self.src[self.pos]
                 value += ch
                 byte_len += len(ch.encode('utf-8'))
@@ -118,6 +140,8 @@ class EmoLangLexer:
                 self.pos += 1
                 self.col += 1
                 byte_len += 1
+            else:
+                raise RuntimeError(f"第 {self.line} 行: 字串未閉合")
             self.current_token = self._emit(TokenType.TOK_STR, value, byte_len, char_length=len(value) + 2)
             return
 

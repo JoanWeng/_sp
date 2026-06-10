@@ -351,7 +351,10 @@ class EmoLangLSPServer:
                     "hoverProvider": True,
                     "documentSymbolProvider": True,
                     "completionProvider": {},
-                    "definitionProvider": True
+                    "definitionProvider": True,
+                    "foldingRangeProvider": True,
+                    "referencesProvider": True,
+                    "renameProvider": {"prepareProvider": True}
                 }
             }),
             "shutdown": lambda: self._send_result(msg_id, None),
@@ -372,6 +375,14 @@ class EmoLangLSPServer:
                 msg_id, self._completion()),
             "textDocument/definition": lambda: self._send_result(
                 msg_id, self._go_to_definition(params)),
+            "textDocument/foldingRange": lambda: self._send_result(
+                msg_id, self._folding_range(params["textDocument"]["uri"])),
+            "textDocument/references": lambda: self._send_result(
+                msg_id, self._references(params)),
+            "textDocument/prepareRename": lambda: self._send_result(
+                msg_id, self._prepare_rename(params)),
+            "textDocument/rename": lambda: self._send_result(
+                msg_id, self._rename(params)),
         }
         handler = handlers.get(method)
         if handler:
@@ -498,6 +509,120 @@ class EmoLangLSPServer:
         items = [{"label": kw, "kind": 14, "detail": "EmoLang 關鍵字"} for kw in KEYWORD_LIST]
         items.append({"label": "🟰", "kind": 14, "detail": "EmoLang 關鍵字 - 賦值"})
         return items
+
+    def _folding_range(self, uri):
+        doc = self.documents.get(uri)
+        if not doc:
+            return []
+        doc.ensure_parsed()
+        brace_stack = []
+        ranges = []
+        for tok in doc.tokens:
+            if tok.type == TokenType.TOK_LBRACE:
+                brace_stack.append(tok.line - 1)
+            elif tok.type == TokenType.TOK_RBRACE:
+                if brace_stack:
+                    start_line = brace_stack.pop()
+                    end_line = tok.line - 1
+                    if end_line > start_line:
+                        ranges.append({
+                            "startLine": start_line,
+                            "endLine": end_line,
+                        })
+        return ranges
+
+    def _find_token_at(self, uri, line, col):
+        doc = self.documents.get(uri)
+        if not doc:
+            return None
+        doc.ensure_parsed()
+        for tok in doc.tokens:
+            if tok.type == TokenType.TOK_EOF:
+                continue
+            tl, ts, te = tok.line - 1, tok.col - 1, tok.col - 1 + tok.char_length
+            if tl == line and ts <= col < te:
+                return tok
+        return None
+
+    def _references(self, params):
+        uri = params["textDocument"]["uri"]
+        pos = params["position"]
+        line, col = pos["line"], pos["character"]
+        tok = self._find_token_at(uri, line, col)
+        if not tok or tok.type != TokenType.TOK_ID:
+            return []
+        locations = []
+        doc = self.documents.get(uri)
+        for t in doc.tokens:
+            if t.type == TokenType.TOK_ID and t.value == tok.value:
+                locations.append({
+                    "uri": uri,
+                    "range": {
+                        "start": {"line": t.line - 1, "character": t.col - 1},
+                        "end": {"line": t.line - 1, "character": t.col - 1 + t.char_length}
+                    }
+                })
+        include_decl = params.get("context", {}).get("includeDeclaration", True)
+        if not include_decl:
+            def_tok = self._find_def_token(uri, tok.value)
+            if def_tok:
+                locations = [loc for loc in locations
+                             if not (loc["range"]["start"]["line"] == def_tok.line - 1
+                                     and loc["range"]["start"]["character"] == def_tok.col - 1)]
+        return locations
+
+    def _find_def_token(self, uri, name):
+        doc = self.documents.get(uri)
+        if not doc:
+            return None
+        doc.ensure_parsed()
+        def_entry = doc.def_map.get(name)
+        if not def_entry:
+            return None
+        for t in doc.tokens:
+            if t.type == TokenType.TOK_ID and t.value == name:
+                r = def_entry["range"]
+                if t.line - 1 == r["start"]["line"] and t.col - 1 == r["start"]["character"]:
+                    return t
+        return None
+
+    def _prepare_rename(self, params):
+        uri = params["textDocument"]["uri"]
+        pos = params["position"]
+        line, col = pos["line"], pos["character"]
+        tok = self._find_token_at(uri, line, col)
+        if not tok or tok.type != TokenType.TOK_ID:
+            return None
+        return {
+            "range": {
+                "start": {"line": tok.line - 1, "character": tok.col - 1},
+                "end": {"line": tok.line - 1, "character": tok.col - 1 + tok.char_length}
+            },
+            "placeholder": tok.value
+        }
+
+    def _rename(self, params):
+        uri = params["textDocument"]["uri"]
+        pos = params["position"]
+        new_name = params.get("newName", "")
+        if not new_name:
+            return None
+        line, col = pos["line"], pos["character"]
+        tok = self._find_token_at(uri, line, col)
+        if not tok or tok.type != TokenType.TOK_ID:
+            return None
+        edits = []
+        doc = self.documents.get(uri)
+        for t in doc.tokens:
+            if t.type == TokenType.TOK_ID and t.value == tok.value:
+                edits.append({
+                    "range": {
+                        "start": {"line": t.line - 1, "character": t.col - 1},
+                        "end": {"line": t.line - 1, "character": t.col - 1 + t.char_length}
+                    },
+                    "newText": new_name
+                })
+        return {"changes": {uri: edits}}
 
 
 def main():

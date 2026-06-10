@@ -2,6 +2,21 @@ from emolang.src.tokens import TokenType
 from emolang.src.ast import ASTType, ASTNode
 
 
+# Tokens that can start a statement — used by diagnostic parser for error recovery
+_STATEMENT_STARTERS = {
+    TokenType.TOK_LET, TokenType.TOK_PRINT, TokenType.TOK_IF,
+    TokenType.TOK_ELSE, TokenType.TOK_WHILE, TokenType.TOK_FOR,
+    TokenType.TOK_STRUCT, TokenType.TOK_FUNC, TokenType.TOK_RETURN,
+    TokenType.TOK_LBRACE, TokenType.TOK_RBRACE,
+    TokenType.TOK_ID,
+    TokenType.TOK_NUM, TokenType.TOK_FLOAT_NUM, TokenType.TOK_STR,
+    TokenType.TOK_TRUE, TokenType.TOK_FALSE,
+    TokenType.TOK_LPAREN,
+    TokenType.TOK_NOT, TokenType.TOK_INPUT, TokenType.TOK_REF,
+    TokenType.TOK_DEREF, TokenType.TOK_LEN, TokenType.TOK_NEW,
+}
+
+
 class EmoLangParser:
     def __init__(self, lexer):
         self.lexer = lexer
@@ -193,6 +208,175 @@ class EmoLangParser:
             statements.append(self.parse_statement())
         self.lexer.eat(TokenType.TOK_RBRACE)
         return statements
+
+    # ── Error-tolerant (diagnostic) parsing ──
+    # Used by the GUI to collect all errors without cascading false positives.
+    # Key idea: when a block-opening LBRACE is missing, record the error and
+    # return an empty block, allowing the parser to continue with the rest.
+
+    def diag_parse(self):
+        self.diag_errors = []
+        try:
+            self.lexer.advance()
+        except RuntimeError as e:
+            self.diag_errors.append((self.lexer.line, str(e)))
+            return []
+        statements = []
+        while self.lexer.current_token.type != TokenType.TOK_EOF:
+            if self.lexer.current_token.type in _STATEMENT_STARTERS:
+                try:
+                    stmt = self._diag_parse_statement()
+                    if stmt:
+                        statements.append(stmt)
+                except RuntimeError as e:
+                    self.diag_errors.append((self.lexer.current_token.line, str(e)))
+                    self.lexer.advance()
+            else:
+                self.diag_errors.append((self.lexer.current_token.line,
+                    f"語法錯誤: 多餘的 {self.lexer.current_token.type}"))
+                self.lexer.advance()
+        return statements
+
+    def _diag_eat(self, expected_type):
+        if self.lexer.current_token.type == expected_type:
+            self.lexer.advance()
+        else:
+            tok = self.lexer.current_token
+            self.diag_errors.append((tok.line, f"語法錯誤: 期待 {expected_type}，但遇到 {tok.type}"))
+            self.lexer.advance()
+
+    def _diag_parse_block(self):
+        if self.lexer.current_token.type != TokenType.TOK_LBRACE:
+            tok = self.lexer.current_token
+            self.diag_errors.append((tok.line, f"語法錯誤: 期待 {TokenType.TOK_LBRACE}，但遇到 {tok.type}"))
+            return []
+        self.lexer.advance()
+        stmts = []
+        while self.lexer.current_token.type != TokenType.TOK_EOF:
+            if self.lexer.current_token.type == TokenType.TOK_RBRACE:
+                self.lexer.advance()
+                return stmts
+            stmt = self._diag_parse_statement()
+            if stmt:
+                stmts.append(stmt)
+        tok = self.lexer.current_token
+        self.diag_errors.append((tok.line, f"語法錯誤: 期待 RBRACE，但遇到 EOF"))
+        return stmts
+
+    def _diag_parse_statement(self):
+        if self.lexer.current_token.type == TokenType.TOK_FUNC:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_FUNC_DEF)
+            node.name = self.lexer.current_token.value
+            self.lexer.advance()
+            self._diag_eat(TokenType.TOK_LPAREN)
+            params = []
+            while self.lexer.current_token.type not in (TokenType.TOK_RPAREN, TokenType.TOK_EOF):
+                param = self.create_node(ASTType.AST_VAR)
+                param.name = self.lexer.current_token.value
+                self.lexer.advance()
+                params.append(param)
+                if self.lexer.current_token.type == TokenType.TOK_COMMA:
+                    self.lexer.advance()
+            self._diag_eat(TokenType.TOK_RPAREN)
+            node.left = params
+            node.body = self._diag_parse_block()
+            return node
+
+        elif self.lexer.current_token.type == TokenType.TOK_RETURN:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_RETURN)
+            node.left = self.parse_expression()
+            return node
+
+        elif self.lexer.current_token.type == TokenType.TOK_LET:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_LET)
+            node.name = self.lexer.current_token.value
+            self.lexer.advance()
+            if self.lexer.current_token.type == TokenType.TOK_ASSIGN:
+                self.lexer.advance()
+                node.left = self.parse_expression()
+            return node
+
+        elif self.lexer.current_token.type == TokenType.TOK_PRINT:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_PRINT)
+            node.left = self.parse_expression()
+            return node
+
+        elif self.lexer.current_token.type == TokenType.TOK_IF:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_IF)
+            node.left = self.parse_expression()
+            node.true_branch = self._diag_parse_block()
+            if self.lexer.current_token.type == TokenType.TOK_ELSE:
+                self.lexer.advance()
+                if self.lexer.current_token.type == TokenType.TOK_IF:
+                    node.false_branch = [self._diag_parse_statement()]
+                else:
+                    node.false_branch = self._diag_parse_block()
+            return node
+
+        elif self.lexer.current_token.type == TokenType.TOK_WHILE:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_WHILE)
+            node.left = self.parse_expression()
+            node.true_branch = self._diag_parse_block()
+            return node
+
+        elif self.lexer.current_token.type == TokenType.TOK_FOR:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_FOR)
+            node.left = self._diag_parse_statement()
+            self._diag_eat(TokenType.TOK_SEP)
+            node.cond = self.parse_expression()
+            self._diag_eat(TokenType.TOK_SEP)
+            node.step = self._diag_parse_statement()
+            node.body = self._diag_parse_block()
+            return node
+
+        elif self.lexer.current_token.type == TokenType.TOK_STRUCT:
+            self.lexer.advance()
+            node = self.create_node(ASTType.AST_STRUCT_DEF)
+            node.name = self.lexer.current_token.value
+            self.lexer.advance()
+            node.body = self._diag_parse_block()
+            return node
+
+        elif self.lexer.current_token.type in (
+            TokenType.TOK_RBRACE, TokenType.TOK_LBRACE, TokenType.TOK_ELSE,
+            TokenType.TOK_RPAREN, TokenType.TOK_COMMA,
+            TokenType.TOK_SEP,
+        ):
+            tok = self.lexer.current_token
+            self.diag_errors.append((tok.line, f"語法錯誤: 多餘的 {tok.type}"))
+            self.lexer.advance()
+            return None
+
+        try:
+            expr = self.parse_expression()
+            if self.lexer.current_token.type == TokenType.TOK_ASSIGN:
+                self.lexer.advance()
+                node = self.create_node(ASTType.AST_ASSIGN)
+                node.left = expr
+                node.right = self.parse_expression()
+                return node
+            elif self.lexer.current_token.type == TokenType.TOK_APPEND:
+                self.lexer.advance()
+                node = self.create_node(ASTType.AST_APPEND)
+                node.left = expr
+                node.right = self.parse_expression()
+                return node
+            return expr
+        except RuntimeError as e:
+            self.diag_errors.append((self.lexer.current_token.line, str(e)))
+            self.lexer.advance()
+            return None
+
+    # NOTE: GUI emolang.py takes only parser.diag_errors[0] (first error)
+    # to avoid cascading. The parser may produce multiple errors per session.
+    # ── End of diagnostic methods ──
 
     def parse_statement(self):
         if self.lexer.current_token.type == TokenType.TOK_FUNC:
