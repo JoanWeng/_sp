@@ -215,3 +215,95 @@ player📌"hp" 🟰 100
 | operator | `#d69d85` 桃色 | 🟰➕➖✖️➗📈📉 等 |
 
 ---
+
+### 9. 語法突顯重構 — 每個 emoji 獨立配色
+
+將顏色系統從 `SEMANTIC_COLORS`（broad tag 分組）改為 `KEYWORD_COLORS` + `BASE_COLORS`，每個 emoji 指令有自己的 tag 與顏色。
+
+**修改的檔案：**
+- `emolang_lsp.py`: 新增 `KEYWORD_COLORS` dict（TokenType → 色碼）；`get_semantic_tag()` 改為回傳 `tok_xxx` 細粒度 tag；`TAG_COLORS` 合併 base + keyword 顏色；`encode_semantic_tokens()` 將細粒度 tag 對應回 broad category 供 LSP 使用；`highlight_ansi()` 同步轉換
+- `emolang.py`: 匯入改為 `TAG_COLORS`；`SEMANTIC_TAG_MAP` 改由此建構
+- TAB 插入建議後呼叫 `_apply_semantic_highlighting()`，修復幽靈文字無顏色的問題
+
+**最終色彩配置：**
+
+| Emoji | 色碼 | 類別 |
+|-------|------|------|
+| 📦🔢🎈📝🚦 | `#569cd6` 藍 | 變數宣告 |
+| 🤔🤷 | `#c586c0` 紫 | 條件判斷 |
+| 🔁🎡 | `#4ec9b0` 青綠 | 迴圈 |
+| 📢📥 | `#dcdcaa` 黃 | 輸出/輸入 |
+| 🛠️🔙 | `#cda869` 金黃 | 函式 |
+| 🏗️ | `#cc7833` 橘褐 | 結構體 |
+| 🆕 | `#6a8759` 深綠 | 建立實例 |
+| 📋📖📚 | `#9876aa` 紫灰 | 資料結構 |
+| 🛒📏 | `#6897bb` 灰藍 | 操作 |
+| 🟢 | `#6a9955` 綠 | 真值 |
+| 🔴 | `#f44747` 紅 | 假值 |
+| 🟰➕➖✖️➗✂️🤝📈📉➡️📍🎯📌🔗🔀🙅 | `#d69d85` 桃色 | 運算子 |
+| 變數識別字 | `#d4d4d4` 白 | 預設文字 |
+| 數字 | `#b5cea8` 綠 | — |
+| 字串 | `#ce9178` 橘 | — |
+
+---
+
+### 10. LSP 配色調整 + 大綱面板實作 (2026.06.09)
+
+**配色調整：**
+- 從每個 emoji 獨立配色改為 VS Code Dark+ C 語法慣例分組
+- 控制流程 (🤔🤷🔁🎡🔙) → `#c586c0` 紫色
+- 型別/宣告 (📦🔢🎈📝🚦🏗️🆕📋📖📚🟢🔴) → `#569cd6` 藍色
+- 函式 (📢📥🛠️🛒📏) → `#dcdcaa` 黃色
+- 移除 GUI 右上角 LSP 狀態標籤
+
+**大綱面板 (左側)：**
+- 新增 `📋 大綱` Listbox 於程式碼編輯區左側 (170px)
+- 使用 `tk.Listbox` 搭配深色主題 (避免 `ttk.Treeview` 渲染問題)
+- 遞迴解析 AST 顯示巢狀結構：
+  - `🛠️ 函式` → 含參數 + 區域變數（縮排）
+  - `🏗️ 結構` → 含成員變數（縮排）
+  - `📦 變數` → 頂層宣告
+- 點擊符號跳轉至對應行
+- 使用 debounce (500ms) 避免頻繁解析
+- 全部以 `try/except` 包裹，不影響其他功能
+
+**修改的檔案：**
+- `emolang_lsp.py`: `KEYWORD_COLORS` 改為 VS Code Dark+ C 分組配色
+- `emolang.py`: 重新實作大綱面板 (`_schedule_outline_update`, `_do_update_outline`, `_add_outline_node`, `_on_outline_select`)、匯入 `EmoLangLexer`/`EmoLangParser`、`code_label`/`code_text` 從 `pack` 改為 `grid`（容納大綱左欄）
+
+---
+
+### 11. 語法突顯修正 + Emoji 字型修復 (2026.06.10)
+
+**問題回報：**
+1. 字串結尾引號和前一個字元是預設白色，未套用 LSP 字串顏色 (`#ce9178`)
+2. 引號內的表情符號顯示為方框加問號
+
+**Bug 分析：**
+- `_apply_semantic_highlighting()` 使用 `_tcl_len(tok.value)` 計算 Tcl 寬度，但 `tok.value` 不包含引號，導致結尾 `"` 不在 tag 範圍內
+- 缺字問題：編輯器字型 `Consolas` 不含 emoji glyph
+
+**修改的檔案：**
+- `emolang.py`:
+  - `_apply_semantic_highlighting()`: 改為從原始碼行取 `line_text[tok.col-1 : tok.col-1+tok.char_length]` 計算正確 Tcl 範圍
+  - `_find_token_at()`: 同上修正 hover 偵測範圍
+  - `on_mouse_move()`: 同上修正 hover underline 範圍
+  - `EmoLangGUI.__init__`: 新增 `tkinter.font.Font` 物件，加入 `Segoe UI Emoji` fallback 字型
+  - `code_text` / `output_text`: 改用新字型物件
+  - `GhostText`: 傳入 `self.editor_font`
+- `emolang/widgets.py`:
+  - `GhostText.__init__`: 新增 `font` 參數，預設保留 `("Consolas", 11)`
+  - `GhostText.show`: 使用自訂字型
+
+**LSP 未完成功能清單（依建議實作順序）：**
+1. diagnostics — 語法錯誤診斷 (`publishDiagnostics`)
+2. didClose / didSave — 文件生命週期補完
+3. go to definition — 跳至定義
+4. find references — 尋找引用
+5. rename — 重新命名符號
+6. foldingRange — 程式碼折疊
+7. signatureHelp — 函式參數提示
+8. formatting — 自動排版
+9. codeAction — 快速修復
+
+---

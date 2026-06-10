@@ -1,3 +1,6 @@
+> 本專案由google ai studio的Gemini 3.1 Pro Preview製作
+  [對話連結](https://aistudio.google.com/app/prompts?state=%7B%22ids%22:%5B%221QvoQLuULjVclSqiMU1nEd_ct2cIslc7J%22%5D,%22action%22:%22open%22,%22userId%22:%22117223938390670233296%22,%22resourceKeys%22:%7B%7D%7D&usp=sharing)
+
 # 如何執行
 
 ```bash
@@ -7,7 +10,7 @@ gcc src/*.c -I include -o emolang
 執行自己的程式碼:
 ./emolang 你的腳本(檔名要.emo)
 
-# 以下是 EmoLang 與 C 語言、Python 在系統架構與語言特性上的對比：
+# 以下是 EmoLang 與 C 語言、Python 在系統架構與語言特性上的對比概要：
 
 ## 1. 執行模型 (Execution Model)
 

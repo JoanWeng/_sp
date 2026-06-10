@@ -42,15 +42,18 @@ class LSPClient:
             except BlockingIOError:
                 pass
 
-            if b"\r\n\r\n" in self.buffer:
+            while b"\r\n\r\n" in self.buffer:
                 header, rest = self.buffer.split(b"\r\n\r\n", 1)
+                content_length = 0
                 for line in header.decode().split("\r\n"):
                     if line.startswith("Content-Length:"):
-                        length = int(line.split(":")[1].strip())
-                        if len(rest) >= length:
-                            body = rest[:length].decode("utf-8")
-                            self.buffer = rest[length:]
-                            return json.loads(body)
+                        content_length = int(line.split(":")[1].strip())
+                if len(rest) >= content_length:
+                    body = rest[:content_length].decode("utf-8")
+                    self.buffer = rest[content_length:]
+                    msg = json.loads(body)
+                    if "method" not in msg:
+                        return msg
 
             time.sleep(0.05)
         return None
@@ -391,6 +394,248 @@ def test_file_tests():
             client.stop()
 
 
+def test_diagnostics():
+    client = LSPClient("emolang_lsp.py").start()
+    client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    client.recv()
+
+    client.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///test.emo",
+                "languageId": "emo",
+                "version": 1,
+                "text": "📢 42\n📢\n📦 x 🟰\n"
+            }
+        }
+    })
+
+    # Read diagnostics (notification, no method filter needed)
+    import json, select
+    buf = b""
+    deadline = time.time() + 3
+    found = False
+    while time.time() < deadline:
+        try:
+            chunk = client.proc.stdout.read(65536)
+            if chunk:
+                buf += chunk
+        except BlockingIOError:
+            pass
+        while b"\r\n\r\n" in buf:
+            header, rest = buf.split(b"\r\n\r\n", 1)
+            cl = 0
+            for line in header.decode().split("\r\n"):
+                if line.startswith("Content-Length:"):
+                    cl = int(line.split(":")[1].strip())
+            if len(rest) >= cl:
+                body = rest[:cl].decode("utf-8")
+                buf = rest[cl:]
+                msg = json.loads(body)
+                if msg.get("method") == "textDocument/publishDiagnostics":
+                    diags = msg["params"]["diagnostics"]
+                    assert len(diags) > 0, "語法錯誤應產生 diagnostics"
+                    for d in diags:
+                        assert "range" in d
+                        assert "message" in d
+                        assert d["severity"] == 1
+                    print(f"  ✓ diagnostics ({len(diags)} 個錯誤)")
+                    found = True
+                    break
+        if found:
+            break
+        time.sleep(0.05)
+    assert found, "未收到 publishDiagnostics"
+    client.stop()
+
+
+def test_did_save():
+    client = LSPClient("emolang_lsp.py").start()
+    client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    client.recv()
+
+    client.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///test.emo",
+                "languageId": "emo",
+                "version": 1,
+                "text": "📢 42"
+            }
+        }
+    })
+
+    client.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didSave",
+        "params": {"textDocument": {"uri": "file:///test.emo"}}
+    })
+
+    buf = b""
+    deadline = time.time() + 3
+    found = False
+    while time.time() < deadline:
+        try:
+            chunk = client.proc.stdout.read(65536)
+            if chunk:
+                buf += chunk
+        except BlockingIOError:
+            pass
+        while b"\r\n\r\n" in buf:
+            header, rest = buf.split(b"\r\n\r\n", 1)
+            cl = 0
+            for line in header.decode().split("\r\n"):
+                if line.startswith("Content-Length:"):
+                    cl = int(line.split(":")[1].strip())
+            if len(rest) >= cl:
+                body = rest[:cl].decode("utf-8")
+                buf = rest[cl:]
+                msg = json.loads(body)
+                if msg.get("method") == "textDocument/publishDiagnostics":
+                    assert msg["params"]["uri"] == "file:///test.emo"
+                    print(f"  ✓ didSave 正確觸發 diagnostics")
+                    found = True
+                    break
+        if found:
+            break
+        time.sleep(0.05)
+    assert found, "didSave 未觸發 diagnostics"
+    client.stop()
+
+
+def test_did_close():
+    client = LSPClient("emolang_lsp.py").start()
+    client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    client.recv()
+
+    client.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///test.emo",
+                "languageId": "emo",
+                "version": 1,
+                "text": "📢 42"
+            }
+        }
+    })
+
+    client.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didClose",
+        "params": {"textDocument": {"uri": "file:///test.emo"}}
+    })
+
+    buf = b""
+    deadline = time.time() + 3
+    found = False
+    while time.time() < deadline:
+        try:
+            chunk = client.proc.stdout.read(65536)
+            if chunk:
+                buf += chunk
+        except BlockingIOError:
+            pass
+        while b"\r\n\r\n" in buf:
+            header, rest = buf.split(b"\r\n\r\n", 1)
+            cl = 0
+            for line in header.decode().split("\r\n"):
+                if line.startswith("Content-Length:"):
+                    cl = int(line.split(":")[1].strip())
+            if len(rest) >= cl:
+                body = rest[:cl].decode("utf-8")
+                buf = rest[cl:]
+                msg = json.loads(body)
+                if msg.get("method") == "textDocument/publishDiagnostics":
+                    diags = msg["params"]["diagnostics"]
+                    assert len(diags) == 0, "didClose 後 diagnostics 應為空"
+                    print(f"  ✓ didClose 正確清除 diagnostics")
+                    found = True
+                    break
+        if found:
+            break
+        time.sleep(0.05)
+    assert found, "didClose 未發送空 diagnostics"
+    client.stop()
+
+
+def test_go_to_definition():
+    client = LSPClient("emolang_lsp.py").start()
+    client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    client.recv()
+
+    code = "📦 x 🟰 10\n📢 x\n🛠️ add(a, b) 👇\n  🔙 a ➕ b\n👆\n📢 add(1, 2)\n"
+    client.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///test.emo",
+                "languageId": "emo",
+                "version": 1,
+                "text": code
+            }
+        }
+    })
+
+    # Go to definition of 'x' on line 1 (0-based), char 2 (Python index after 📢 )
+    client.send({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": {"uri": "file:///test.emo"},
+            "position": {"line": 1, "character": 2}
+        }
+    })
+    resp = client.recv()
+    assert resp is not None
+    loc = resp["result"]
+    assert loc is not None, "go to definition 應回傳位置"
+    assert loc["uri"] == "file:///test.emo"
+    assert loc["range"]["start"]["line"] == 0
+    print(f"  ✓ go to definition (x → line {loc['range']['start']['line']})")
+
+    # Go to definition of 'add' on line 5 (0-based), char 2 (Python index after 📢 )
+    client.send({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": {"uri": "file:///test.emo"},
+            "position": {"line": 5, "character": 2}
+        }
+    })
+    resp = client.recv()
+    assert resp is not None
+    loc = resp["result"]
+    assert loc is not None, "函式定義應回傳位置"
+    assert loc["range"]["start"]["line"] == 2
+    print(f"  ✓ go to definition (add → line {loc['range']['start']['line']})")
+
+    # Non-existent identifier (📦 keyword at line 0, char 0)
+    client.send({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": {"uri": "file:///test.emo"},
+            "position": {"line": 0, "character": 0}
+        }
+    })
+    resp = client.recv()
+    assert resp is not None
+    assert resp["result"] is None, "關鍵字應回傳 null"
+    print(f"  ✓ go to definition (關鍵字 → null)")
+
+    client.stop()
+
+
 def main():
     tests = [
         ("initialize", test_initialize),
@@ -399,6 +644,10 @@ def main():
         ("documentSymbol", test_document_symbol),
         ("completion", test_completion),
         ("didChange", test_did_change),
+        ("diagnostics", test_diagnostics),
+        ("didSave", test_did_save),
+        ("didClose", test_did_close),
+        ("go to definition", test_go_to_definition),
         ("tests/*.emo 檔案", test_file_tests),
     ]
 

@@ -18,9 +18,11 @@ if HAS_TKINTER:
     from emolang.src.completion import CompletionEngine
     from emolang.widgets import ToolTip, GhostText
     from emolang.src.tokens import TokenType
-    from emolang_lsp import get_tokens, get_semantic_tag, hover_content, SEMANTIC_COLORS
-
-    SEMANTIC_TAG_MAP = {name: {"fg": color} for name, color in SEMANTIC_COLORS.items()}
+    from emolang.src.lexer import EmoLangLexer
+    from emolang.src.parser import EmoLangParser
+    from emolang_lsp import get_tokens, get_semantic_tag, hover_content, TAG_COLORS
+ 
+    SEMANTIC_TAG_MAP = {name: {"fg": color} for name, color in TAG_COLORS.items()}
 
 
 def run_cli(code):
@@ -134,9 +136,22 @@ if HAS_TKINTER:
             self.interpreter = EmoLangEvaluator()
             self.next_line_suggestion = None
             self._suggestion_timer = None
+            self._outline_timer_id = None
+            self._outline_lines = []
+
+            import tkinter.font as tkfont
+            self.editor_font = tkfont.Font(family="Consolas", size=11)
+            self.output_font = tkfont.Font(family="Consolas", size=11)
+            try:
+                self.root.tk.call("font", "configure", self.editor_font,
+                                  "-family", ["Consolas", "{Segoe UI Emoji}"])
+                self.root.tk.call("font", "configure", self.output_font,
+                                  "-family", ["Consolas", "{Segoe UI Emoji}"])
+            except tk.TclError:
+                pass
 
             self.create_widgets()
-            self.ghost = GhostText(self.code_text)
+            self.ghost = GhostText(self.code_text, font=self.editor_font)
 
         def create_widgets(self):
             title_frame = tk.Frame(self.root, bg="#2c3e50", height=60)
@@ -200,13 +215,43 @@ if HAS_TKINTER:
             left_frame = tk.Frame(self.paned, bg="#ecf0f1")
             self.paned.add(left_frame, width=450)
 
-            code_label = tk.Label(left_frame, text="📝 程式碼", font=("Arial", 12, "bold"), bg="#ecf0f1")
-            code_label.pack(anchor=tk.W, padx=10, pady=5)
+            outline_tab = tk.Frame(left_frame, bg="#252526")
+            outline_tab.grid(row=0, column=0, sticky=tk.EW, padx=(10, 5), pady=0)
+            outline_header = tk.Label(outline_tab, text="📋 大綱", font=("Arial", 10, "bold"),
+                                     bg="#2d2d2d", fg="#cccccc", pady=4)
+            outline_header.pack(fill=tk.X)
 
-            self.code_text = scrolledtext.ScrolledText(left_frame, font=("Consolas", 11),
+            code_tab = tk.Frame(left_frame, bg="#ecf0f1")
+            code_tab.grid(row=0, column=1, sticky=tk.EW, padx=(0, 10), pady=0)
+            code_label = tk.Label(code_tab, text="📝 程式碼", font=("Arial", 12, "bold"), bg="#ecf0f1")
+            code_label.pack(side=tk.LEFT)
+
+            outline_frame = tk.Frame(left_frame, bg="#252526", width=170)
+            outline_frame.grid(row=1, column=0, sticky="ns", padx=(10, 5), pady=5)
+            outline_frame.grid_propagate(False)
+
+            self.code_text = scrolledtext.ScrolledText(left_frame, font=self.editor_font,
                                                 bg="#1e1e1e", fg="#d4d4d4", insertbackground="white",
                                                 wrap=tk.NONE, tabs=("1c",))
-            self.code_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+            self.code_text.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=5)
+
+            self._error_label = tk.Label(left_frame, text="✔ 就緒", font=("Consolas", 9),
+                                        bg="#1e1e1e", fg="#6a9955", anchor=tk.W, padx=10)
+            self._error_label.grid(row=2, column=1, sticky="ew", padx=(5, 10))
+            self._error_msg = None
+            self._debug_label = tk.Label(left_frame, text="", font=("Consolas", 8),
+                                        bg="#1e1e1e", fg="#888888", anchor=tk.W, padx=10)
+            self._debug_label.grid(row=3, column=1, sticky="ew", padx=(5, 10))
+
+            self.outline_listbox = tk.Listbox(outline_frame, bg="#1e1e1e", fg="#d4d4d4",
+                                             font=("Consolas", 10), selectbackground="#264f78",
+                                             relief=tk.FLAT, borderwidth=0, highlightthickness=0)
+            self.outline_listbox.pack(fill=tk.BOTH, expand=True)
+            self.outline_listbox.bind("<<ListboxSelect>>", self._on_outline_select)
+
+            left_frame.grid_rowconfigure(1, weight=1)
+            left_frame.grid_columnconfigure(0, weight=0)
+            left_frame.grid_columnconfigure(1, weight=1)
 
             self._setup_tags()
             self._highlight_after_id = None
@@ -217,10 +262,9 @@ if HAS_TKINTER:
             self.code_text.bind('<Tab>', self.on_tab)
             self.code_text.bind('<Motion>', self.on_mouse_move)
             self.code_text.bind('<Leave>', self._on_mouse_leave)
-
-            self._lsp_status = tk.Label(toolbar, text="LSP ●",
-                fg="#4ec9b0", bg="#34495e", font=("Consolas", 9))
-            self._lsp_status.pack(side=tk.RIGHT, padx=8, pady=5)
+            self.code_text.bind('<F12>', self._go_to_definition)
+            self.root.bind('<Control-g>', lambda e: self._go_to_definition())
+            self.code_text.bind('<Control-g>', lambda e: self._go_to_definition())
 
             self.root.after(100, self._apply_semantic_highlighting)
 
@@ -230,7 +274,7 @@ if HAS_TKINTER:
             output_label = tk.Label(right_frame, text="📢 輸出結果", font=("Arial", 12, "bold"), bg="#ecf0f1")
             output_label.pack(anchor=tk.W, padx=10, pady=5)
 
-            self.output_text = scrolledtext.ScrolledText(right_frame, font=("Consolas", 11),
+            self.output_text = scrolledtext.ScrolledText(right_frame, font=self.output_font,
                                                 bg="#f8f9fa", fg="#2c3e50", state='disabled')
             self.output_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
@@ -248,28 +292,127 @@ if HAS_TKINTER:
             for name, cfg in SEMANTIC_TAG_MAP.items():
                 self.code_text.tag_configure(name, foreground=cfg["fg"])
             self.code_text.tag_configure("hover_tag", underline=True, underlinefg="#569cd6")
+            self.code_text.tag_configure("error_tag", foreground="#f44747", background="#3a1a1a", underline=True)
 
         def _apply_semantic_highlighting(self):
             code = self.code_text.get("1.0", tk.END)
             for name in SEMANTIC_TAG_MAP:
                 self.code_text.tag_remove(name, "1.0", tk.END)
             self.code_text.tag_remove("hover_tag", "1.0", tk.END)
+            self.code_text.tag_remove("error_tag", "1.0", tk.END)
 
-            lines = code.split("\n")
-            tokens = get_tokens(code)
-            for i, tok in enumerate(tokens):
-                if tok.type == TokenType.TOK_EOF:
-                    continue
-                next_type = tokens[i + 1].type if i + 1 < len(tokens) else None
-                tag = get_semantic_tag(tok, next_type)
-                line_text = lines[tok.line - 1] if tok.line - 1 < len(lines) else ""
-                tc = self._tcl_col(line_text, tok.col)
-                tcl_end = tc + self._tcl_len(tok.value)
-                start = f"{tok.line}.{tc}"
-                end = f"{tok.line}.{tcl_end}"
+            try:
+                lines = code.split("\n")
+                tokens = get_tokens(code)
+
+                # Diagnostics — capture syntax errors
+                self._error_msg = None
                 try:
-                    self.code_text.tag_add(tag, start, end)
+                    lexer = EmoLangLexer(code)
+                    parser = EmoLangParser(lexer)
+                    parser.parse()
+                except RuntimeError as e:
+                    tok = getattr(lexer, 'current_token', None)
+                    if tok and tok.type == TokenType.TOK_EOF:
+                        for t in reversed(tokens):
+                            if t.type != TokenType.TOK_EOF:
+                                tok = t
+                                break
+                    if tok and tok.type != TokenType.TOK_EOF and tok.line > 0 and tok.line <= len(lines):
+                        line_text = lines[tok.line - 1]
+                        if tok.col > 0 and tok.col <= len(line_text):
+                            tc = self._tcl_col(line_text, tok.col)
+                            token_src = line_text[tok.col - 1 : tok.col - 1 + max(tok.char_length, 1)]
+                            if token_src:
+                                tcl_end = tc + sum(2 if ord(c) > 0xFFFF else 1 for c in token_src)
+                                try:
+                                    self.code_text.tag_add("error_tag", f"{tok.line}.{tc}", f"{tok.line}.{tcl_end}")
+                                except tk.TclError:
+                                    pass
+                    self._error_msg = str(e)
+                except Exception as e:
+                    self._error_msg = str(e)
+                self._update_error_label()
+
+                for tok in tokens:
+                    if tok.type == TokenType.TOK_EOF:
+                        continue
+                    tag = get_semantic_tag(tok, None)
+                    if tok.line <= 0 or tok.line > len(lines):
+                        continue
+                    line_text = lines[tok.line - 1]
+                    if tok.col <= 0 or tok.col > len(line_text):
+                        continue
+                    tc = self._tcl_col(line_text, tok.col)
+                    end_idx = tok.col - 1 + max(tok.char_length, 1)
+                    token_src = line_text[tok.col - 1 : end_idx]
+                    if not token_src:
+                        continue
+                    tcl_end = tc + sum(2 if ord(c) > 0xFFFF else 1 for c in token_src)
+                    try:
+                        self.code_text.tag_add(tag, f"{tok.line}.{tc}", f"{tok.line}.{tcl_end}")
+                    except tk.TclError:
+                        pass
+                try:
+                    self.code_text.tag_raise("error_tag")
                 except tk.TclError:
+                    pass
+            except Exception as e:
+                msg = f"[HL error] {e}"
+                print(msg, file=sys.stderr)
+                self._debug_label.config(text=msg)
+
+        def _update_error_label(self):
+            if self._error_msg:
+                self._error_label.config(text=f"⚠ {self._error_msg}", fg="#f44747")
+            else:
+                self._error_label.config(text="✔ 無語法錯誤", fg="#6a9955")
+
+        def _schedule_outline_update(self):
+            if self._outline_timer_id:
+                self.root.after_cancel(self._outline_timer_id)
+            self._outline_timer_id = self.root.after(500, self._do_update_outline)
+
+        def _do_update_outline(self):
+            self._outline_timer_id = None
+            try:
+                self.outline_listbox.delete(0, tk.END)
+                self._outline_lines.clear()
+                code = self.code_text.get("1.0", tk.END)
+                lexer = EmoLangLexer(code)
+                parser = EmoLangParser(lexer)
+                nodes = parser.parse()
+                for node in nodes:
+                    self._add_outline_node(node, 0)
+            except Exception:
+                pass
+
+        def _add_outline_node(self, node, depth):
+            icons = {"FUNC_DEF": "🛠️", "LET": "📦", "STRUCT_DEF": "🏗️", "VAR": "📦"}
+            name = getattr(node, "name", None)
+            if not name or node.type not in icons:
+                return
+            indent = "  " * depth
+            self.outline_listbox.insert(tk.END, f"{indent}{icons[node.type]} {name}")
+            self._outline_lines.append(node.line)
+            if node.type == "FUNC_DEF":
+                for p in (node.left or []):
+                    self._add_outline_node(p, depth + 1)
+                for s in (node.body or []):
+                    self._add_outline_node(s, depth + 1)
+            elif node.type == "STRUCT_DEF":
+                for s in (node.body or []):
+                    self._add_outline_node(s, depth + 1)
+
+        def _on_outline_select(self, event):
+            sel = self.outline_listbox.curselection()
+            if sel and sel[0] < len(self._outline_lines):
+                try:
+                    line = self._outline_lines[sel[0]]
+                    self.code_text.see(f"{line}.0")
+                    self.code_text.mark_set(tk.INSERT, f"{line}.0")
+                    self.code_text.focus_set()
+                except Exception:
                     pass
 
         def _find_token_at(self, line, col):
@@ -281,7 +424,8 @@ if HAS_TKINTER:
                     continue
                 line_text = lines[tok.line - 1] if tok.line - 1 < len(lines) else ""
                 tc = self._tcl_col(line_text, tok.col)
-                te = tc + self._tcl_len(tok.value)
+                token_src = line_text[tok.col - 1 : tok.col - 1 + tok.char_length]
+                te = tc + sum(2 if ord(c) > 0xFFFF else 1 for c in token_src)
                 if tok.line == line and tc <= col < te:
                     return tok
             return None
@@ -307,7 +451,8 @@ if HAS_TKINTER:
                 lines = code.split("\n")
                 line_text = lines[tok.line - 1] if tok.line - 1 < len(lines) else ""
                 tc = self._tcl_col(line_text, tok.col)
-                te = tc + self._tcl_len(tok.value)
+                token_src = line_text[tok.col - 1 : tok.col - 1 + tok.char_length]
+                te = tc + sum(2 if ord(c) > 0xFFFF else 1 for c in token_src)
                 self.code_text.tag_add("hover_tag", f"{line}.{tc}", f"{line}.{te}")
 
                 self._hover_timer_id = self.root.after(
@@ -333,12 +478,63 @@ if HAS_TKINTER:
                 self._hover_tooltip = None
             self.code_text.tag_remove("hover_tag", "1.0", tk.END)
 
+        def _get_def_map(self):
+            code = self.code_text.get("1.0", tk.END)
+            def_map = {}
+            try:
+                lexer = EmoLangLexer(code)
+                parser = EmoLangParser(lexer)
+                nodes = parser.parse()
+                tokens = get_tokens(code)
+                name_tokens = {}
+                for t in tokens:
+                    if t.type == TokenType.TOK_ID:
+                        name_tokens.setdefault(t.value, []).append(t)
+                for n in nodes:
+                    if n.type in ("LET", "FUNC_DEF"):
+                        for t in name_tokens.get(n.name, []):
+                            if t.line == n.line and t.col >= n.col:
+                                def_map[n.name] = t
+                                break
+            except RuntimeError:
+                pass
+            except Exception as e:
+                print(f"[_get_def_map error] {e}", file=sys.stderr)
+            return def_map
+
+        def _go_to_definition(self, event=None):
+            try:
+                cursor = self.code_text.index(tk.INSERT)
+                line = int(cursor.split(".")[0])
+                col = int(cursor.split(".")[1])
+                tok = self._find_token_at(line, col)
+                if not tok or tok.type != TokenType.TOK_ID:
+                    self._debug_label.config(text=f"F12: no ID at ({line},{col})")
+                    return None
+                def_map = self._get_def_map()
+                def_tok = def_map.get(tok.value)
+                if not def_tok:
+                    self._debug_label.config(text=f"F12: '{tok.value}' not in def_map ({len(def_map)} defs)")
+                    return None
+                lines = self.code_text.get("1.0", tk.END).split("\n")
+                line_text = lines[def_tok.line - 1] if def_tok.line - 1 < len(lines) else ""
+                tc = self._tcl_col(line_text, def_tok.col)
+                self.code_text.see(f"{def_tok.line}.{tc}")
+                self.code_text.mark_set(tk.INSERT, f"{def_tok.line}.{tc}")
+                self.code_text.focus_set()
+                self._debug_label.config(text=f"F12: → line {def_tok.line}")
+                return "break"
+            except Exception as e:
+                self._debug_label.config(text=f"F12 error: {e}")
+                return None
+
         def new_file(self):
             self.code_text.delete(1.0, tk.END)
             self.output_text.config(state='normal')
             self.output_text.delete(1.0, tk.END)
             self.output_text.config(state='disabled')
             self.root.after(100, self._apply_semantic_highlighting)
+            self._schedule_outline_update()
 
         def open_file(self):
             filename = filedialog.askopenfilename(filetypes=[("EmoLang 檔案", "*.emo"), ("文字檔", "*.txt"), ("所有檔案", "*.*")])
@@ -347,6 +543,7 @@ if HAS_TKINTER:
                     self.code_text.delete(1.0, tk.END)
                     self.code_text.insert(1.0, f.read())
                 self.root.after(100, self._apply_semantic_highlighting)
+                self._schedule_outline_update()
 
         def save_file(self):
             filename = filedialog.asksaveasfilename(defaultextension=".emo",
@@ -415,6 +612,7 @@ if HAS_TKINTER:
             self.remove_ghost()
             self.next_line_suggestion = None
             self._apply_semantic_highlighting()
+            self._schedule_outline_update()
             self.root.after(80, self.update_suggestion)
 
         def remove_ghost(self):
@@ -466,6 +664,7 @@ if HAS_TKINTER:
 
             self._suggestion_timer = self.root.after(80, self.update_suggestion)
             self._apply_semantic_highlighting()
+            self._schedule_outline_update()
 
         def on_enter(self, event):
             return None

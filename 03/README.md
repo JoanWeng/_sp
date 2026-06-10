@@ -1,3 +1,8 @@
+> 本專案由opencode撰寫
+  在record.md有收錄部分對話摘要
+> LSP語言伺服器參考Nickh2k6的期中專案
+  [網址](https://github.com/Nickh2k6/_sp/tree/ad86df851942f993d3e0041e410009cbdb6d2cec/midterm_project)
+
 # EmoLang 直譯器 v4.0
 
 EmoLang 是一款結合 **C 語言結構**與 **Python 動態特性**的 Emoji 程式語言直譯器。

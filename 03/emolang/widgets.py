@@ -15,7 +15,7 @@ class ToolTip:
         self.tip = tk.Toplevel(self.widget)
         self.tip.overrideredirect(True)
         self.tip.geometry(f"+{int(x)}+{int(y)}")
-        label = tk.Label(self.tip, text=self.text, font=("Consolas", 9),
+        label = tk.Label(self.tip, text=self.text,
                          bg="#ffffcc", fg="#333333", padx=6, pady=2, relief=tk.SOLID, bd=1)
         label.pack()
 
@@ -26,8 +26,9 @@ class ToolTip:
 
 
 class GhostText:
-    def __init__(self, text_widget):
+    def __init__(self, text_widget, font=None):
         self.text = text_widget
+        self.font = font or ("Consolas", 11)
         self.label = None
         self.text_content = ''
 
@@ -41,7 +42,7 @@ class GhostText:
         if not bbox:
             return
         self.label = tk.Label(
-            self.text, text=content, font=("Consolas", 11),
+            self.text, text=content, font=self.font,
             fg="#555555", bg="#1e1e1e", anchor=tk.W,
         )
         self.label.place(x=bbox[0], y=bbox[1])

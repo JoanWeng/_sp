@@ -29,18 +29,52 @@ from emolang.src.parser import EmoLangParser
 
 # ── LSP 核心功能 (可被 GUI import 使用) ──
 
-SEMANTIC_COLORS = {
-    "keyword":  "#c586c0",
-    "variable": "#9cdcfe",
-    "function": "#dcdcaa",
+BASE_COLORS = {
     "number":   "#b5cea8",
     "string":   "#ce9178",
     "operator": "#d69d85",
+    "function": "#dcdcaa",
+    "variable": "#d4d4d4",
 }
 
+KEYWORD_COLORS = {
+    # VS Code Dark+ C 慣例：
+    #   紫 #c586c0 = 控制流程 (if, else, while, for, return, switch, case)
+    #   藍 #569cd6 = 型別/宣告 (int, float, char, void, struct, const)
+    #   黃 #dcdcaa = 函式呼叫/定義
+    TokenType.TOK_IF: "#c586c0",
+    TokenType.TOK_ELSE: "#c586c0",
+    TokenType.TOK_WHILE: "#c586c0",
+    TokenType.TOK_FOR: "#c586c0",
+    TokenType.TOK_RETURN: "#c586c0",
+    TokenType.TOK_LET: "#569cd6",
+    TokenType.TOK_STRUCT: "#569cd6",
+    TokenType.TOK_NEW: "#569cd6",
+    TokenType.TOK_LIST: "#569cd6",
+    TokenType.TOK_DICT: "#569cd6",
+    TokenType.TOK_ARRAY: "#569cd6",
+    TokenType.TOK_TRUE: "#569cd6",
+    TokenType.TOK_FALSE: "#569cd6",
+    TokenType.TOK_PRINT: "#dcdcaa",
+    TokenType.TOK_INPUT: "#dcdcaa",
+    TokenType.TOK_FUNC: "#dcdcaa",
+    TokenType.TOK_APPEND: "#dcdcaa",
+    TokenType.TOK_LEN: "#dcdcaa",
+    TokenType.TOK_LBRACE: "#d4d4d4",
+    TokenType.TOK_RBRACE: "#d4d4d4",
+    TokenType.TOK_LPAREN: "#d4d4d4",
+    TokenType.TOK_RPAREN: "#d4d4d4",
+    TokenType.TOK_COMMA: "#d4d4d4",
+    TokenType.TOK_SEP: "#d4d4d4",
+}
+
+TAG_COLORS = dict(BASE_COLORS)
+for _tok_type, _color in KEYWORD_COLORS.items():
+    TAG_COLORS[f"tok_{_tok_type}"] = _color
+
 ANSI_COLORS = {
-    "keyword":  "\033[95m",
-    "variable": "\033[94m",
+    "keyword":  "\033[94m",
+    "variable": "\033[0m",
     "function": "\033[93m",
     "number":   "\033[92m",
     "string":   "\033[91m",
@@ -83,8 +117,8 @@ def get_tokens(code):
 
 
 def get_semantic_tag(tok, next_type=None):
-    if tok.type in _KEYWORD_SET:
-        return "keyword"
+    if tok.type in KEYWORD_COLORS:
+        return f"tok_{tok.type}"
     if tok.type in _NUMBER_SET:
         return "number"
     if tok.type == TokenType.TOK_STR:
@@ -138,7 +172,8 @@ def highlight_ansi(code):
         if tok.type == TokenType.TOK_EOF:
             continue
         tag = get_semantic_tag(tok)
-        color = ANSI_COLORS.get(tag, "")
+        broad_tag = "keyword" if tag.startswith("tok_") else tag
+        color = ANSI_COLORS.get(broad_tag, "")
         start_byte = len(code[:prev_end].encode('utf-8'))
         tok_start = code.find(tok.value, prev_end) if tok.value else -1
         if tok_start < 0:
@@ -160,7 +195,8 @@ def encode_semantic_tokens(tokens):
             continue
         next_type = tokens[i + 1].type if i + 1 < len(tokens) and tokens[i + 1].type != TokenType.TOK_EOF else None
         tag = get_semantic_tag(tok, next_type)
-        type_idx = ["keyword", "variable", "function", "number", "string", "operator"].index(tag)
+        broad_tag = "keyword" if tag.startswith("tok_") else tag
+        type_idx = ["keyword", "variable", "function", "number", "string", "operator"].index(broad_tag)
 
         delta_line = tok.line - 1 - prev_line
         delta_col = tok.col - 1 - prev_col if delta_line == 0 else tok.col - 1
@@ -179,22 +215,72 @@ class Document:
         self.dirty = True
         self.tokens = []
         self.ast_nodes = []
+        self.diagnostics = []
+        self.def_map = {}
 
     def update(self, content):
         self.content = content
         self.dirty = True
 
+    def _make_diag(self, msg, tok):
+        return {
+            "range": {
+                "start": {"line": tok.line - 1, "character": tok.col - 1},
+                "end": {"line": tok.line - 1, "character": tok.col - 1 + max(tok.char_length, 1)}
+            },
+            "severity": 1,
+            "message": str(msg),
+            "source": "EmoLang"
+        }
+
     def ensure_parsed(self):
         if not self.dirty:
             return
         self.tokens = tokenize(self.content)
+        self.diagnostics = []
+        self.def_map = {}
         try:
             lexer = EmoLangLexer(self.content)
             parser = EmoLangParser(lexer)
             self.ast_nodes = parser.parse()
-        except Exception:
+            self._build_def_map()
+        except RuntimeError as e:
             self.ast_nodes = []
+            tok = getattr(lexer, 'current_token', None)
+            if tok and tok.type != TokenType.TOK_EOF:
+                self.diagnostics.append(self._make_diag(e, tok))
+            else:
+                self.diagnostics.append({
+                    "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}},
+                    "severity": 1, "message": str(e), "source": "EmoLang"
+                })
+        except Exception as e:
+            self.ast_nodes = []
+            self.diagnostics.append({
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}},
+                "severity": 1, "message": str(e), "source": "EmoLang"
+            })
         self.dirty = False
+
+    def _build_def_map(self):
+        name_tokens = {}
+        for tok in self.tokens:
+            if tok.type == TokenType.TOK_ID:
+                name_tokens.setdefault(tok.value, []).append(tok)
+
+        for stmt in self.ast_nodes:
+            if stmt.type in ("LET", "FUNC_DEF"):
+                candidates = name_tokens.get(stmt.name, [])
+                for t in candidates:
+                    if t.line == stmt.line and t.col >= stmt.col:
+                        self.def_map[stmt.name] = {
+                            "uri": self.uri,
+                            "range": {
+                                "start": {"line": t.line - 1, "character": t.col - 1},
+                                "end": {"line": t.line - 1, "character": t.col - 1 + t.char_length}
+                            }
+                        }
+                        break
 
 
 # ── LSP 伺服器 (JSON-RPC over stdin/stdout) ──
@@ -257,21 +343,25 @@ class EmoLangLSPServer:
         handlers = {
             "initialize": lambda: self._send_result(msg_id, {
                 "capabilities": {
+                    "textDocumentSync": {"openClose": True, "change": 2, "save": {"includeText": True}},
                     "semanticTokensProvider": {"full": True, "legend": {
                         "tokenTypes": ["keyword","variable","function","number","string","operator","comment","type"],
                         "tokenModifiers": []
                     }},
                     "hoverProvider": True,
                     "documentSymbolProvider": True,
-                    "completionProvider": {}
+                    "completionProvider": {},
+                    "definitionProvider": True
                 }
             }),
             "shutdown": lambda: self._send_result(msg_id, None),
             "exit": lambda: sys.exit(0),
-            "textDocument/didOpen": lambda: self._handle_doc(
+            "textDocument/didOpen": lambda: self._handle_doc_open(
                 params["textDocument"]["uri"], params["textDocument"]["text"]),
-            "textDocument/didChange": lambda: self._handle_doc(
+            "textDocument/didChange": lambda: self._handle_doc_change(
                 params["textDocument"]["uri"], params["contentChanges"][0]["text"]),
+            "textDocument/didSave": lambda: self._send_diagnostics(params["textDocument"]["uri"]),
+            "textDocument/didClose": lambda: self._handle_doc_close(params["textDocument"]["uri"]),
             "textDocument/semanticTokens/full": lambda: self._send_result(
                 msg_id, {"data": self._semantic_tokens(params["textDocument"]["uri"])}),
             "textDocument/hover": lambda: self._send_result(
@@ -280,6 +370,8 @@ class EmoLangLSPServer:
                 msg_id, self._document_symbol(params["textDocument"]["uri"])),
             "textDocument/completion": lambda: self._send_result(
                 msg_id, self._completion()),
+            "textDocument/definition": lambda: self._send_result(
+                msg_id, self._go_to_definition(params)),
         }
         handler = handlers.get(method)
         if handler:
@@ -287,11 +379,33 @@ class EmoLangLSPServer:
         elif msg_id is not None:
             self._send_result(msg_id, None)
 
-    def _handle_doc(self, uri, text):
+    def _handle_doc_open(self, uri, text):
+        self.documents[uri] = Document(uri, text)
+        self._send_diagnostics(uri)
+
+    def _handle_doc_change(self, uri, text):
         if uri in self.documents:
             self.documents[uri].update(text)
-        else:
-            self.documents[uri] = Document(uri, text)
+            self._send_diagnostics(uri)
+
+    def _handle_doc_close(self, uri):
+        self.documents.pop(uri, None)
+        self._send_message({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {"uri": uri, "diagnostics": []}
+        })
+
+    def _send_diagnostics(self, uri):
+        doc = self.documents.get(uri)
+        if not doc:
+            return
+        doc.ensure_parsed()
+        self._send_message({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {"uri": uri, "diagnostics": doc.diagnostics}
+        })
 
     def _semantic_tokens(self, uri):
         doc = self.documents.get(uri)
@@ -335,6 +449,24 @@ class EmoLangLSPServer:
             tl, ts, te = tok.line - 1, tok.col - 1, tok.col - 1 + tok.char_length
             if tl == line and ts <= col < te:
                 return {"contents": {"kind": "markdown", "value": hover_content(tok)}}
+        return None
+
+    def _go_to_definition(self, params):
+        uri = params["textDocument"]["uri"]
+        pos = params["position"]
+        line, col = pos["line"], pos["character"]
+        doc = self.documents.get(uri)
+        if not doc:
+            return None
+        doc.ensure_parsed()
+        for tok in doc.tokens:
+            if tok.type == TokenType.TOK_EOF:
+                continue
+            tl, ts, te = tok.line - 1, tok.col - 1, tok.col - 1 + tok.char_length
+            if tl == line and ts <= col < te:
+                if tok.type == TokenType.TOK_ID and tok.value in doc.def_map:
+                    return doc.def_map[tok.value]
+                break
         return None
 
     def _document_symbol(self, uri):
