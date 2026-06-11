@@ -475,24 +475,25 @@ if HAS_TKINTER:
             try:
                 lines = code.split("\n")
 
-                # Diagnostics — single pass with error-tolerant parser
+                # Diagnostics — skip when fold markers present (would create noise)
                 self._all_errors = []
-                lexer = EmoLangLexer(code)
-                parser = EmoLangParser(lexer)
-                parser.diag_parse()
-                seen_lines = set()
-                for rel_line, msg in parser.diag_errors:
-                    if rel_line > 0 and rel_line not in seen_lines and len(self._all_errors) < 100:
-                        seen_lines.add(rel_line)
-                        self._all_errors.append((rel_line, msg))
+                if not self._folded_regions:
+                    lexer = EmoLangLexer(code)
+                    parser = EmoLangParser(lexer)
+                    parser.diag_parse()
+                    seen_lines = set()
+                    for rel_line, msg in parser.diag_errors:
+                        if rel_line > 0 and rel_line not in seen_lines and len(self._all_errors) < 100:
+                            seen_lines.add(rel_line)
+                            self._all_errors.append((rel_line, msg))
 
-                # Error lines shown via red line numbers in gutter + error label below
-                for err_line, _ in self._all_errors:
-                    if err_line > 0 and err_line <= len(lines):
-                        try:
-                            self.code_text.tag_add("error_tag", f"{err_line}.0", f"{err_line}.0 lineend")
-                        except tk.TclError:
-                            pass
+                    # Error lines shown via red line numbers in gutter + error label below
+                    for err_line, _ in self._all_errors:
+                        if err_line > 0 and err_line <= len(lines):
+                            try:
+                                self.code_text.tag_add("error_tag", f"{err_line}.0", f"{err_line}.0 lineend")
+                            except tk.TclError:
+                                pass
 
                 if self._all_errors:
                     count = len(self._all_errors)
@@ -694,12 +695,18 @@ if HAS_TKINTER:
         def _get_folding_ranges(self):
             code = self.code_text.get("1.0", tk.END)
             tokens = get_tokens(code)
+            lines = code.split("\n")
             brace_stack = []
             ranges = []
             for tok in tokens:
                 if tok.type == TokenType.TOK_LBRACE:
                     brace_stack.append(tok.line)
                 elif tok.type == TokenType.TOK_RBRACE:
+                    # Skip fold marker RBRACE and pop matching LBRACE
+                    if 0 <= tok.line - 1 < len(lines) and "[#" in lines[tok.line - 1]:
+                        if brace_stack:
+                            brace_stack.pop()
+                        continue
                     if brace_stack:
                         start = brace_stack.pop()
                         end = tok.line
@@ -731,11 +738,14 @@ if HAS_TKINTER:
 
         def _unfold_all(self, event=None):
             for text, marker in self._folded_regions:
-                pos = self.code_text.search(marker, tk.END, backwards=True)
-                if pos:
-                    line = int(pos.split(".")[0])
-                    self.code_text.delete(f"{line}.0", f"{line+1}.0")
-                    self.code_text.insert(f"{line}.0", text)
+                try:
+                    pos = self.code_text.search(marker, tk.END, backwards=True)
+                    if pos:
+                        line = int(pos.split(".")[0])
+                        self.code_text.delete(f"{line}.0", f"{line+1}.0")
+                        self.code_text.insert(f"{line}.0", text)
+                except tk.TclError:
+                    pass
             self._folded_regions = []
             self.code_text.tag_remove("fold_marker", "1.0", tk.END)
             self._apply_semantic_highlighting()
@@ -746,27 +756,37 @@ if HAS_TKINTER:
             for i, (text, marker) in enumerate(self._folded_regions):
                 pos = self.code_text.search(marker, f"{line}.0", f"{line+1}.0")
                 if pos:
-                    self.code_text.delete(f"{line}.0", f"{line+1}.0")
-                    self.code_text.insert(f"{line}.0", text)
+                    try:
+                        self.code_text.delete(f"{line}.0", f"{line+1}.0")
+                        self.code_text.insert(f"{line}.0", text)
+                    except tk.TclError:
+                        return False
                     self._folded_regions.pop(i)
                     self._apply_semantic_highlighting()
                     # Re-apply fold_marker tag to remaining regions
-                    self.code_text.tag_remove("fold_marker", "1.0", tk.END)
-                    for _, m in self._folded_regions:
-                        p = self.code_text.search(m, tk.END, backwards=True)
-                        if p:
-                            pl = int(p.split(".")[0])
-                            self.code_text.tag_add("fold_marker", f"{pl}.0", f"{pl+1}.0")
+                    try:
+                        self.code_text.tag_remove("fold_marker", "1.0", tk.END)
+                        for _, m in self._folded_regions:
+                            p = self.code_text.search(m, tk.END, backwards=True)
+                            if p:
+                                pl = int(p.split(".")[0])
+                                self.code_text.tag_add("fold_marker", f"{pl}.0", f"{pl+1}.0")
+                    except tk.TclError:
+                        pass
                     self._update_line_numbers()
                     return True
             return False
 
         def _on_fold_click(self, event):
-            index = self.code_text.index(f"@{event.x},{event.y}")
-            if index:
-                line = int(index.split(".")[0])
-                if self._unfold_marker_at_line(line):
-                    self._debug_label.config(text=f"📂 已展開 line {line}")
+            try:
+                index = self.code_text.index(f"@{event.x},{event.y}")
+                if index:
+                    line = int(index.split(".")[0])
+                    if self._unfold_marker_at_line(line):
+                        self._debug_label.config(text=f"📂 已展開 line {line}")
+            except Exception as e:
+                print(f"[fold click error] {e}", file=sys.stderr)
+                self._debug_label.config(text=f"⚠ 展開失敗: {e}")
             return "break"
 
         def _get_all_id_tokens(self):
