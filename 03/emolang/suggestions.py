@@ -22,32 +22,35 @@ class SuggestionsMixin:
         self.ghost.show(text)
 
     def update_suggestion(self):
-        cursor = self.code_text.index(tk.INSERT)
-        cursor_line = int(cursor.split('.')[0])
-        cursor_col = int(cursor.split('.')[1])
-        all_text = self.code_text.get('1.0', tk.END)
-        all_lines = all_text.split('\n')
-        line_text = all_lines[cursor_line - 1] if cursor_line <= len(all_lines) else ""
+        try:
+            cursor = self.code_text.index(tk.INSERT)
+            cursor_line = int(cursor.split('.')[0])
+            cursor_col = int(cursor.split('.')[1])
+            all_text = self.code_text.get('1.0', tk.END)
+            all_lines = all_text.split('\n')
+            line_text = all_lines[cursor_line - 1] if cursor_line <= len(all_lines) else ""
 
-        self.remove_ghost()
-        self.next_line_suggestion = None
+            self.remove_ghost()
+            self.next_line_suggestion = None
 
-        line_sug = CompletionEngine.get_line_suggestion(line_text)
-        if line_sug:
-            self.show_ghost(line_sug)
-            return
-
-        stripped = line_text.strip()
-        if stripped:
-            var_ghost = CompletionEngine.get_variable_ghost(line_text, cursor_col, all_text)
-            if var_ghost:
-                self.show_ghost(var_ghost)
+            line_sug = CompletionEngine.get_line_suggestion(line_text)
+            if line_sug:
+                self.show_ghost(line_sug)
                 return
 
-        if not stripped:
-            next_sug = CompletionEngine.get_next_line_suggestion(all_lines, cursor_line - 1)
-            if next_sug:
-                self.next_line_suggestion = '\n' + next_sug
+            stripped = line_text.strip()
+            if stripped:
+                var_ghost = CompletionEngine.get_variable_ghost(line_text, cursor_col, all_text)
+                if var_ghost:
+                    self.show_ghost(var_ghost)
+                    return
+
+            if not stripped:
+                next_sug = CompletionEngine.get_next_line_suggestion(all_lines, cursor_line - 1)
+                if next_sug:
+                    self.next_line_suggestion = '\n' + next_sug
+        except Exception:
+            pass
 
     def on_key_release(self, event):
         if self._suggestion_timer:
@@ -63,9 +66,18 @@ class SuggestionsMixin:
             return
 
         self._suggestion_timer = self.root.after(80, self.update_suggestion)
-        self._apply_semantic_highlighting()
-        self._schedule_outline_update()
-        self._update_line_numbers()
+        try:
+            self._apply_semantic_highlighting()
+        except Exception:
+            pass
+        try:
+            self._schedule_outline_update()
+        except Exception:
+            pass
+        try:
+            self._update_line_numbers()
+        except Exception:
+            pass
 
     def on_enter(self, event):
         return None

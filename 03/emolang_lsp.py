@@ -178,7 +178,10 @@ def hover_content(tok):
 
 
 def highlight_ansi(code):
-    tokens = tokenize(code)
+    try:
+        tokens = tokenize(code)
+    except Exception:
+        return code
     result = []
     prev_end = 0
     for tok in tokens:

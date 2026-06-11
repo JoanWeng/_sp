@@ -44,8 +44,8 @@ def run_cli(code):
 
 
 def run_repl():
-    print(f"{ANSI_RESET}{highlight_ansi('# EmoLang 直譯器 v4.0 — 互動模式')}")
-    print(highlight_ansi('# 輸入 emoji 指令，或輸入 exit 離開'))
+    print(f"{ANSI_RESET}{highlight_ansi('📢 EmoLang 直譯器 v4.0 — 互動模式')}")
+    print(highlight_ansi('📢 輸入 emoji 指令，或輸入 exit 離開'))
     print()
 
     interpreter = EmoLangEvaluator()
@@ -133,6 +133,7 @@ if HAS_TKINTER:
                 self.code_text.mark_set(tk.INSERT, insert_pos)
             except tk.TclError:
                 pass
+            self._debug_label.config(text="")
 
         def _safe_redo(self):
             try:
@@ -148,6 +149,7 @@ if HAS_TKINTER:
                 self.code_text.mark_set(tk.INSERT, insert_pos)
             except tk.TclError:
                 pass
+            self._debug_label.config(text="")
 
         def create_widgets(self):
             title_frame = tk.Frame(self.root, bg="#2c3e50", height=60)

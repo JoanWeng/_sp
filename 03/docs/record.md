@@ -549,3 +549,51 @@ emolang/
 - `emolang/emoji_panel.py`: **新增** — EmojiMixin（`toggle_emoji`, `toggle_emoji_key_mode`, `_load_emoji_key_map`, `_save_emoji_key_map`, `_configure_emoji_keys`）
 - `emolang/suggestions.py`: **新增** — SuggestionsMixin（`insert_emoji`, `remove_ghost`, `show_ghost`, `update_suggestion`, `on_key_release`, `on_enter`, `on_tab`, `on_up`, `on_down`）
 
+---
+
+### 18. 摺疊後復原凍結問題 — 除錯嘗試 (2026.06.11)
+
+**問題回報：** 摺疊程式碼後按下 `Ctrl+Z`（復原）導致編輯器完全凍結（卡死）。
+
+**除錯過程（4 次迭代，均未解決）：**
+
+| 嘗試 | 做法 | 結果 |
+|------|------|------|
+| 1 | `_fold_all`/`_unfold_all` 加入 `edit_separator()`；`_safe_undo` 重建摺疊狀態 | 凍結未解決 |
+| 2 | `undo=False` 執行摺疊操作；`after_idle` 延遲高亮；`_apply_semantic_highlighting` 提前返回 | 凍結未解決 |
+| 3 | 單次 `delete()` + `insert()` 取代逐區塊操作 | 凍結未解決 |
+| 4 | 回歸逐區塊方案，無 `edit_separator()`；`_fold_all` 進入時驗證 marker 有效性 | 凍結未完全解決 + backspace 也觸發凍結 |
+
+**最終決策：** 所有修改回退至 GitHub 原始版本（`git checkout --`），問題待重新釐清。
+
+---
+
+### 19. 摺疊復原修復 + 狀態欄清理 (2026.06.11)
+
+**問題：**
+1. 摺疊的 `delete`/`insert` 操作污染 Tkinter undo stack，復原時可能撤銷摺疊導致文字與 `_folded_regions` 不一致，程式卡死
+2. 摺疊後復原再重做，因 `_folded_regions` 未清空，按摺疊無反應
+3. 復原/重做後 `_debug_label` 仍顯示舊的摺疊訊息
+4. 開檔時 `_unfold_all()` 無條件顯示「已展開全部區塊」
+5. REPL 啟動時 `highlight_ansi('# ...')` 因 lexer 不認得 `#` 而 crash
+
+**修改的檔案：**
+
+- `emolang/folding.py`:
+  - `_fold_all` — 先檢查 `_folded_regions` 若非空則呼叫 `_unfold_all()` 展開再重新摺疊；摺疊操作前後用 `config(undo=False/True)` 包裹，防止污染 undo stack；摺疊後呼叫 `_apply_semantic_highlighting()` 刷新語法高亮與狀態欄
+  - `_unfold_all` — `undo=False/True` 包裹；加入 `had_folded` 判斷，僅在有實際摺疊區域時才顯示「已展開全部區塊」
+  - `_unfold_marker_at_line` — `undo=False/True` 包裹
+
+- `emolang/suggestions.py`:
+  - `on_key_release` — 每個操作各自 `try/except` 隔離，單一環節例外不卡死整串事件
+  - `update_suggestion` — 加入 `try/except` 保護
+
+- `emolang.py`:
+  - `_safe_undo` / `_safe_redo` — 操作後清除 `_debug_label`（`config(text="")`）
+
+- `emolang_lsp.py`:
+  - `highlight_ansi` — `tokenize()` 用 `try/except` 保護，失敗時回傳純文字
+
+- `emolang.py` (REPL):
+  - `run_repl()` banner 文字從 `#` 改為 `📢`（避免 lexer 錯誤）
+
