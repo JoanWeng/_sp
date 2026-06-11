@@ -597,3 +597,83 @@ emolang/
 - `emolang.py` (REPL):
   - `run_repl()` banner 文字從 `#` 改為 `📢`（避免 lexer 錯誤）
 
+---
+
+### 20. 摺疊後編輯觸發語法錯誤 → GUI 死機 (2026.06.11)
+
+**問題回報：** 摺疊程式碼後，修改其他行並觸發語法錯誤（如刪除關鍵字），GUI 完全死機。
+
+**Root Cause：** `diag_parse()` 主迴圈無限迴圈。
+
+當摺疊標記 `  … 👆 (N lines) [#XXXX]  ` 存在於程式碼中時，詞法分析器 `advance()` 遇到 `[` 和 `#` 等不支援字元會拋出 `RuntimeError`。但 `advance()` 在拋錯前**不更新** `current_token`，導致 `current_token` 保留上一次成功呼叫的值。`diag_parse()` 的主 `while` 迴圈看到 `current_token` 沒變，重複呼叫 `_diag_parse_statement()` → 重複遇到 `[` → 重複拋錯 → 無限迴圈。
+
+**受影響的呼叫路徑：**
+1. `_apply_semantic_highlighting()` → 原本在 `_folded_regions` 非空時跳過 `diag_parse()`（診斷被隱藏）
+2. `_do_update_outline()` → 直接對含摺疊標記的文字呼叫 `diag_parse()`，500ms 後觸發死機
+
+**修正（4 個檔案）：**
+
+| 檔案 | 修改 |
+|------|------|
+| `emolang/src/parser.py` | `diag_parse()` 主迴圈加入**卡死偵測器**；新增 `_diag_advance_safe()` 安全前進方法；`_diag_eat()` 改用安全版本 |
+| `emolang/highlighting.py` | 新增 `_reconstruct_full_code()` 將摺疊標記還原為原始程式碼；`_apply_semantic_highlighting()` 永遠在完整程式碼上執行 `diag_parse()` |
+| `emolang/outline.py` | `_do_update_outline()` 在有摺疊時也呼叫 `_reconstruct_full_code()` 重建完整程式碼再解析 |
+| `emolang/folding.py` | `_fold_all()` / `_unfold_all()` / `_unfold_marker_at_line()` 全部使用 `undo=False` 執行操作 → `edit_reset()` 清空復原堆疊 → `undo=True`，確保摺疊操作不污染 undo stack，又不造成 Tk 內部狀態不一致 |
+
+**`_diag_advance_safe()` 實作：**
+```python
+def _diag_advance_safe(self):
+    try:
+        self.lexer.advance()
+    except RuntimeError:
+        if self.lexer.pos < len(self.lexer.src):
+            ch = self.lexer.src[self.lexer.pos]
+            self.lexer.pos += 1
+            if ch == '\n':
+                self.lexer.line += 1
+                self.lexer.col = 1
+            else:
+                self.lexer.col += 1
+```
+
+**卡死偵測器實作（`diag_parse()` 主迴圈）：**
+```python
+_prev_tok_type = None
+_prev_tok_line = -1
+_prev_tok_col = -1
+while self.lexer.current_token.type != TokenType.TOK_EOF:
+    _stuck = (_prev_tok_type is not None and
+              self.lexer.current_token.type == _prev_tok_type and
+              self.lexer.current_token.line == _prev_tok_line and
+              self.lexer.current_token.col == _prev_tok_col)
+    _prev_tok_type = self.lexer.current_token.type
+    _prev_tok_line = self.lexer.current_token.line
+    _prev_tok_col = self.lexer.current_token.col
+    if _stuck:
+        self._diag_advance_safe()
+        continue
+    ...
+```
+
+**`_reconstruct_full_code()` 實作：**
+```python
+def _reconstruct_full_code(self):
+    code = self.code_text.get("1.0", tk.END)
+    if not self._folded_regions:
+        return code
+    lines = code.split("\n")
+    for text, marker in self._folded_regions:
+        for i, line in enumerate(lines):
+            if marker in line:
+                original_lines = text.split("\n")
+                lines[i:i+1] = original_lines
+                break
+    return "\n".join(lines)
+```
+
+**摺疊/展開的 undo 策略（最終版）：**
+- 使用 `undo=False` 包裹所有 delete/insert 操作（不記錄到 undo stack）
+- 完成後呼叫 `edit_reset()` 清空 Tk 內部復原堆疊（防止 `undo=True` 後狀態不一致）
+- 最後啟用 `undo=True`，後續編輯正常記錄
+- 展開時也清空復原堆疊，摺疊期間的編輯歷史一併清除（文字已恢復到摺疊前的狀態）
+

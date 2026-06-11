@@ -8,6 +8,20 @@ from emolang.constants import SEMANTIC_TAG_MAP
 
 
 class HighlightingMixin:
+    def _reconstruct_full_code(self):
+        """Replace fold markers with original text to get the full source for diagnostics."""
+        code = self.code_text.get("1.0", tk.END)
+        if not self._folded_regions:
+            return code
+        lines = code.split("\n")
+        for text, marker in self._folded_regions:
+            for i, line in enumerate(lines):
+                if marker in line:
+                    original_lines = text.split("\n")
+                    lines[i:i+1] = original_lines
+                    break
+        return "\n".join(lines)
+
     def _apply_semantic_highlighting(self):
         code = self.code_text.get("1.0", tk.END)
         for name in SEMANTIC_TAG_MAP:
@@ -19,22 +33,22 @@ class HighlightingMixin:
             lines = code.split("\n")
 
             self._all_errors = []
-            if not self._folded_regions:
-                lexer = EmoLangLexer(code)
-                parser = EmoLangParser(lexer)
-                parser.diag_parse()
-                seen_lines = set()
-                for rel_line, msg in parser.diag_errors:
-                    if rel_line > 0 and rel_line not in seen_lines and len(self._all_errors) < 100:
-                        seen_lines.add(rel_line)
-                        self._all_errors.append((rel_line, msg))
+            diag_code = self._reconstruct_full_code()
+            lexer = EmoLangLexer(diag_code)
+            parser = EmoLangParser(lexer)
+            parser.diag_parse()
+            seen_lines = set()
+            for rel_line, msg in parser.diag_errors:
+                if rel_line > 0 and rel_line not in seen_lines and len(self._all_errors) < 100:
+                    seen_lines.add(rel_line)
+                    self._all_errors.append((rel_line, msg))
 
-                for err_line, _ in self._all_errors:
-                    if err_line > 0 and err_line <= len(lines):
-                        try:
-                            self.code_text.tag_add("error_tag", f"{err_line}.0", f"{err_line}.0 lineend")
-                        except tk.TclError:
-                            pass
+            for err_line, _ in self._all_errors:
+                if err_line > 0 and err_line <= len(lines):
+                    try:
+                        self.code_text.tag_add("error_tag", f"{err_line}.0", f"{err_line}.0 lineend")
+                    except tk.TclError:
+                        pass
 
             if self._all_errors:
                 count = len(self._all_errors)

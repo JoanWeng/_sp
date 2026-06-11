@@ -46,6 +46,7 @@ class FoldingMixin:
                     self.code_text.tag_add("fold_marker", idx, f"{int(idx.split('.')[0])+1}.0")
                     folded.append((text, marker.rstrip()))
         finally:
+            self.code_text.edit_reset()
             self.code_text.config(undo=True)
         self._folded_regions = folded
         if folded:
@@ -67,6 +68,7 @@ class FoldingMixin:
                 except tk.TclError:
                     pass
         finally:
+            self.code_text.edit_reset()
             self.code_text.config(undo=True)
         self._folded_regions = []
         self.code_text.tag_remove("fold_marker", "1.0", tk.END)
@@ -86,6 +88,7 @@ class FoldingMixin:
                 except tk.TclError:
                     self.code_text.config(undo=True)
                     return False
+                self.code_text.edit_reset()
                 self.code_text.config(undo=True)
                 self._folded_regions.pop(i)
                 self._apply_semantic_highlighting()

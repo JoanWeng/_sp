@@ -289,7 +289,20 @@ class EmoLangParser:
             self.diag_errors.append((self.lexer.line, str(e)))
             return []
         statements = []
+        _prev_tok_type = None
+        _prev_tok_line = -1
+        _prev_tok_col = -1
         while self.lexer.current_token.type != TokenType.TOK_EOF:
+            _stuck = (_prev_tok_type is not None and
+                      self.lexer.current_token.type == _prev_tok_type and
+                      self.lexer.current_token.line == _prev_tok_line and
+                      self.lexer.current_token.col == _prev_tok_col)
+            _prev_tok_type = self.lexer.current_token.type
+            _prev_tok_line = self.lexer.current_token.line
+            _prev_tok_col = self.lexer.current_token.col
+            if _stuck:
+                self._diag_advance_safe()
+                continue
             if self.lexer.current_token.type in _STATEMENT_STARTERS:
                 try:
                     stmt = self._diag_parse_statement()
@@ -297,26 +310,38 @@ class EmoLangParser:
                         statements.append(stmt)
                 except RuntimeError as e:
                     self.diag_errors.append((self.lexer.current_token.line, str(e)))
-                    try:
-                        self.lexer.advance()
-                    except RuntimeError:
-                        pass
+                    self._diag_advance_safe()
             else:
                 self.diag_errors.append((self.lexer.current_token.line,
                     f"語法錯誤: 多餘的 {self.lexer.current_token.type}"))
-                try:
-                    self.lexer.advance()
-                except RuntimeError as e:
-                    self.diag_errors.append((self.lexer.line, str(e)))
+                self._diag_advance_safe()
         return statements
+
+    def _diag_advance_safe(self):
+        """Advance lexer while safely handling RuntimeError (e.g. unsupported chars like [ ]).
+        
+        When advance() raises RuntimeError, current_token is NOT updated,
+        which would cause the main loop to hang. Manually skip one char instead.
+        """
+        try:
+            self.lexer.advance()
+        except RuntimeError:
+            if self.lexer.pos < len(self.lexer.src):
+                ch = self.lexer.src[self.lexer.pos]
+                self.lexer.pos += 1
+                if ch == '\n':
+                    self.lexer.line += 1
+                    self.lexer.col = 1
+                else:
+                    self.lexer.col += 1
 
     def _diag_eat(self, expected_type):
         if self.lexer.current_token.type == expected_type:
-            self.lexer.advance()
+            self._diag_advance_safe()
         else:
             tok = self.lexer.current_token
             self.diag_errors.append((tok.line, f"語法錯誤: 期待 {expected_type}，但遇到 {tok.type}"))
-            self.lexer.advance()
+            self._diag_advance_safe()
 
     def _diag_parse_block(self):
         if self.lexer.current_token.type != TokenType.TOK_LBRACE:

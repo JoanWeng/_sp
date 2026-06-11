@@ -15,6 +15,8 @@ class OutlineMixin:
             self.outline_listbox.delete(0, tk.END)
             self._outline_lines.clear()
             code = self.code_text.get("1.0", tk.END)
+            if getattr(self, '_folded_regions', None):
+                code = self._reconstruct_full_code()
             lexer = EmoLangLexer(code)
             parser = EmoLangParser(lexer)
             nodes = parser.diag_parse()

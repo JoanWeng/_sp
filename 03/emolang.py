@@ -447,6 +447,8 @@ if HAS_TKINTER:
                     f.write(self.code_text.get(1.0, tk.END))
 
         def run_code(self):
+            if self._folded_regions:
+                self._unfold_all()
             code = self.code_text.get(1.0, tk.END).strip()
             if not code:
                 return
