@@ -618,7 +618,7 @@ emolang/
 | `emolang/src/parser.py` | `diag_parse()` 主迴圈加入**卡死偵測器**；新增 `_diag_advance_safe()` 安全前進方法；`_diag_eat()` 改用安全版本 |
 | `emolang/highlighting.py` | 新增 `_reconstruct_full_code()` 將摺疊標記還原為原始程式碼；`_apply_semantic_highlighting()` 永遠在完整程式碼上執行 `diag_parse()` |
 | `emolang/outline.py` | `_do_update_outline()` 在有摺疊時也呼叫 `_reconstruct_full_code()` 重建完整程式碼再解析 |
-| `emolang/folding.py` | `_fold_all()` / `_unfold_all()` / `_unfold_marker_at_line()` 全部使用 `undo=False` 執行操作 → `edit_reset()` 清空復原堆疊 → `undo=True`，確保摺疊操作不污染 undo stack，又不造成 Tk 內部狀態不一致 |
+| `emolang/folding.py` | `_fold_all()` / `_unfold_all()` / `_unfold_marker_at_line()` 使用 `undo=False` 執行操作 → `undo=True`，摺疊操作不進 undo stack |
 
 **`_diag_advance_safe()` 實作：**
 ```python
@@ -673,7 +673,35 @@ def _reconstruct_full_code(self):
 
 **摺疊/展開的 undo 策略（最終版）：**
 - 使用 `undo=False` 包裹所有 delete/insert 操作（不記錄到 undo stack）
-- 完成後呼叫 `edit_reset()` 清空 Tk 內部復原堆疊（防止 `undo=True` 後狀態不一致）
-- 最後啟用 `undo=True`，後續編輯正常記錄
-- 展開時也清空復原堆疊，摺疊期間的編輯歷史一併清除（文字已恢復到摺疊前的狀態）
+- 完成後啟用 `undo=True`，摺疊前的編輯歷史保留在 undo stack 上
+- 摺疊後的編輯也正常記錄在 undo stack 上
+- 展開還原原始文字後，摺疊前後的編輯歷史均可 Ctrl+Z 復原
+
+---
+
+### 21. 移除 edit_reset() — 保留摺疊前的編輯歷史 (2026.06.12)
+
+**問題：** `_fold_all()` / `_unfold_all()` / `_unfold_marker_at_line()` 內的 `edit_reset()` 清空整個 Tk undo stack，導致摺疊前的編輯無法用 Ctrl+Z 復原。
+
+**Root Cause：** `edit_reset()` 無差別清除所有復原歷史，包括摺疊前已存在的編輯記錄。
+
+**修改：** 從三個方法中移除 `edit_reset()` 呼叫，僅保留 `undo=False/True` 包覆：
+
+```python
+self.code_text.config(undo=False)
+try:
+    # delete/insert (不進 undo stack)
+finally:
+    self.code_text.config(undo=True)
+```
+
+**理由：** entry 20 的 stuck detector + `_reconstruct_full_code()` 已從 root 解決 `diag_parse()` 在摺疊標記上的無限迴圈。原先 `edit_reset()` 是為防止 Tk undo state 不一致的 workaround，現在已無必要。
+
+**風險：** 摺疊狀態下 Ctrl+Z 退回至摺疊前編輯時，Tk 可能在錯誤位置（摺疊後文字較短）套用復原操作。實測後若發生請回報。
+
+**修改的檔案：**
+- `emolang/folding.py`:
+  - `_fold_all()` — 移除 `finally` 區塊中的 `edit_reset()`
+  - `_unfold_all()` — 同上
+  - `_unfold_marker_at_line()` — 同上
 
