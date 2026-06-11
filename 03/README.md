@@ -1,6 +1,6 @@
 > 本專案由 opencode 撰寫，部分對話摘要收錄於 [docs/record.md](docs/record.md)
 
-# EmoLang 直譯器 v4.2
+# EmoLang 直譯器 v4.0
 
 EmoLang 是一款結合 **C 語言結構**與 **Python 動態特性**的 Emoji 程式語言直譯器。
 
@@ -11,7 +11,16 @@ EmoLang 是一款結合 **C 語言結構**與 **Python 動態特性**的 Emoji �
 ```
 03/
 ├── emolang/                 # 主套件
-│   ├── __init__.py
+│   ├── __init__.py          # 核心函式庫匯出
+│   ├── constants.py         # 常數（EMOJI_NAMES, SEMANTIC_TAG_MAP 等）
+│   ├── widgets.py           # ToolTip, GhostText 小工具
+│   ├── folding.py           # 程式碼摺疊（FoldingMixin）
+│   ├── highlighting.py      # 語法高亮 + 診斷（HighlightingMixin）
+│   ├── outline.py           # 大綱面板（OutlineMixin）
+│   ├── hover.py             # 懸浮提示（HoverMixin）
+│   ├── refactor.py          # 重新命名 + 參考查詢（RefactorMixin）
+│   ├── emoji_panel.py       # Emoji 工具列 + 快捷鍵（EmojiMixin）
+│   ├── suggestions.py       # 幽靈文字 + 自動完成（SuggestionsMixin）
 │   └── src/
 │       ├── tokens.py        # Token 類型定義
 │       ├── ast.py           # 抽象語法樹節點
@@ -26,7 +35,8 @@ EmoLang 是一款結合 **C 語言結構**與 **Python 動態特性**的 Emoji �
 ├── docs/
 │   ├── record.md            # 開發記錄
 │   ├── emoji-指令.md        # Emoji 指令參考
-│   └── 使用指南.md          # GUI 功能指南
+│   ├── 使用指南.md          # GUI 功能指南
+│   └── 程式碼解析與架構.md  # 原始碼架構與執行流程解析
 └── README.md                # 本檔案
 ```
 

@@ -497,3 +497,55 @@ player📌"hp" 🟰 100
 **修改的檔案：**
 - `emolang.py`: 新增 `EMOJI_KEY_CONFIG_FILE`、`DEFAULT_EMOJI_KEY_MAP`；重新實作 emoji_frame 為 3 區塊橫排；新增 `_load_emoji_key_map()`、`_save_emoji_key_map()`、`toggle_emoji_key_mode()`、`_configure_emoji_keys()`；修改 `_on_code_keypress()` 支援快捷鍵模式；工具列按鈕加入文字標示
 
+---
+
+### 17. 程式碼模組拆分 — emolang.py 重構 (2026.06.11)
+
+**目標：** 將 1237 行的單一 `emolang.py` 按功能拆分為 7 個 mixin 模組 + 1 個 constants 模組，改善可維護性。
+
+**做法：** 使用 Python多重繼承（Mixin pattern），每個 mixin class 定義一組相關方法，`EmoLangGUI` 繼承所有 mixin，保留 `self.method()` 呼叫模式。
+
+**最終檔案結構：**
+
+```
+emolang/
+├── __init__.py        — 核心函式庫匯出
+├── constants.py       — EMOJI_NAMES, SEMANTIC_TAG_MAP, EMOJI_KEY_CONFIG_FILE, DEFAULT_EMOJI_KEY_MAP
+├── widgets.py         — ToolTip, GhostText（不變）
+├── folding.py         — FoldingMixin（摺疊/展開邏輯）
+├── highlighting.py    — HighlightingMixin（語法高亮 + 診斷）
+├── outline.py         — OutlineMixin（大綱面板）
+├── hover.py           — HoverMixin（滑鼠懸浮提示）
+├── refactor.py        — RefactorMixin（重新命名 + 參照搜尋）
+├── emoji_panel.py     — EmojiMixin（emoji 工具列 + 快捷鍵設定）
+├── suggestions.py     — SuggestionsMixin（幽靈文字 + 自動完成）
+└── src/               — 核心直譯器（不變）
+```
+
+**`emolang.py` 行數變化：** 1237 → 526 (縮減 57%)
+
+**各模組行數：**
+
+| 檔案 | 行數 |
+|------|------|
+| `emolang.py` | 526 |
+| `emolang/constants.py` | 69 |
+| `emolang/folding.py` | 101 |
+| `emolang/highlighting.py` | 121 |
+| `emolang/outline.py` | 52 |
+| `emolang/hover.py` | 71 |
+| `emolang/refactor.py` | 101 |
+| `emolang/emoji_panel.py` | 159 |
+| `emolang/suggestions.py` | 93 |
+
+**修改的檔案：**
+- `emolang.py`: 常數移至 `constants.py`；類別改為多重繼承 `class EmoLangGUI(FoldingMixin, HighlightingMixin, OutlineMixin, HoverMixin, RefactorMixin, EmojiMixin, SuggestionsMixin)`；保留 19 個核心方法（init, create_widgets, scroll, file ops, run, undo/redo）；移除 32 個已提取方法
+- `emolang/constants.py`: **新增** — 集中管理 EMOJI_NAMES, SEMANTIC_TAG_MAP, EMOJI_KEY_CONFIG_FILE, DEFAULT_EMOJI_KEY_MAP
+- `emolang/folding.py`: **新增** — FoldingMixin（`_get_folding_ranges`, `_fold_all`, `_unfold_all`, `_unfold_marker_at_line`, `_on_fold_click`）
+- `emolang/highlighting.py`: **新增** — HighlightingMixin（`_apply_semantic_highlighting`, `_update_error_label`, `_show_diagnostics`）
+- `emolang/outline.py`: **新增** — OutlineMixin（`_schedule_outline_update`, `_do_update_outline`, `_add_outline_node`, `_on_outline_select`）
+- `emolang/hover.py`: **新增** — HoverMixin（`_find_token_at`, `on_mouse_move`, `_show_hover_tooltip`, `_on_mouse_leave`）
+- `emolang/refactor.py`: **新增** — RefactorMixin（`_get_all_id_tokens`, `_show_references`, `_rename_symbol`）
+- `emolang/emoji_panel.py`: **新增** — EmojiMixin（`toggle_emoji`, `toggle_emoji_key_mode`, `_load_emoji_key_map`, `_save_emoji_key_map`, `_configure_emoji_keys`）
+- `emolang/suggestions.py`: **新增** — SuggestionsMixin（`insert_emoji`, `remove_ghost`, `show_ghost`, `update_suggestion`, `on_key_release`, `on_enter`, `on_tab`, `on_up`, `on_down`）
+
