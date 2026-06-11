@@ -1,6 +1,6 @@
 > 本專案由 opencode 撰寫，部分對話摘要收錄於 [docs/record.md](docs/record.md)
 
-# EmoLang 直譯器 v4.1
+# EmoLang 直譯器 v4.2
 
 EmoLang 是一款結合 **C 語言結構**與 **Python 動態特性**的 Emoji 程式語言直譯器。
 
@@ -21,6 +21,7 @@ EmoLang 是一款結合 **C 語言結構**與 **Python 動態特性**的 Emoji �
 │       └── evaluator.py     # 執行引擎
 ├── emolang.py               # 主入口 (GUI + CLI + REPL)
 ├── emolang_lsp.py           # LSP 伺服器
+├── emoji_keys.json          # 快捷鍵映射設定（自動產生）
 ├── tests/                   # EmoLang 測試程式 (.emo)
 ├── docs/
 │   ├── record.md            # 開發記錄
@@ -58,7 +59,7 @@ REPL 範例：
 ```text
 >>> 📢 42
 42
->>> 🛠️ add(a, b) 👇
+>>> 🛠 add(a, b) 👇
 ...     🔙 a ➕ b
 ... 👆
 >>> 📢 add(3, 4)
@@ -74,6 +75,7 @@ REPL 範例：
 | [docs/emoji-指令.md](docs/emoji-指令.md) | 完整 Emoji 指令參考與語法 |
 | [docs/使用指南.md](docs/使用指南.md) | GUI 功能、快捷鍵、操作說明 |
 | [docs/record.md](docs/record.md) | 開發歷程與版本變更記錄 |
+| [docs/程式碼解析與架構.md](docs/程式碼解析與架構.md) | 原始碼架構與執行流程解析 |
 
 ---
 

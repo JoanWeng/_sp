@@ -1,6 +1,6 @@
 # EmoLang 直譯器開發記錄  
 
-> ⚠️ **注意**：本文件由 AI 輔助維護，記錄可能不完整。若發現遺漏請提交 Issue。
+> ⚠️ **注意**：本文件由 AI 輔助維護，記錄可能不完整。
 
 ---
 
@@ -466,4 +466,34 @@ player📌"hp" 🟰 100
 - `emolang.py`: 移除 `_get_def_map`、`_go_to_definition` 方法及 F12/Ctrl+G 綁定；新增 Ctrl+O/N/S 綁定；所有 code_text 快捷鍵回傳 `"break"`；加回 `error_tag` 設定與套用
 - `emolang_lsp.py`: `get_tokens` 錯誤恢復加入 `\n` 行號同步
 - `emolang/src/parser.py`: 移除 `AST_STR and expr.name == ""` 豁免
+
+---
+
+### 16. Emoji 鍵盤改版 + 快捷鍵映射功能 (2026.06.11)
+
+**內建鍵盤重新排版：**
+- 改為 3 個區塊橫排，每區塊左側有類別標籤：
+  - `📦 變數‧流程` — 宣告、輸出/輸入、流程控制、區塊 (15 個)
+  - `🛠 函式‧資料` — 函式、結構、指標、資料結構 (15 個)
+  - `➕ 運算‧比較` — 算術、比較、邏輯 (11 個)
+- 修復 `🛠️`（含 VS16）在 tkinter 按鈕中圖示變形的問題 — 改為 `🛠` 不帶變體選擇器
+
+**新增快捷鍵映射功能：**
+- `_emoji_key_map` 字典：字母鍵 → emoji 對應
+- `emoji_keys.json`：持久化儲存（自動載入/儲存）
+- `_configure_emoji_keys()` 設定視窗：
+  - 可滾動列表顯示所有 emoji 與當前按鍵綁定
+  - 點選 emoji → 按字母鍵設定快捷鍵
+  - 支援清除按鍵、恢復預設
+- `toggle_emoji_key_mode()` 切換快捷鍵模式：
+  - `⌨️ 模式`（一般模式）→ 按鍵正常輸入
+  - `🔣 模式`（紫底）→ 按字母鍵插入對應 emoji
+- 工具列按鈕新增中文文字標示（`🔣 鍵盤`、`⌨️ 模式`、`⚙ 設定`）
+
+**問題修復：**
+- 設定視窗滾輪無法滾動 — 綁定 `<MouseWheel>` / `<Button-4>` / `<Button-5>` 到 canvas
+- VS16 變體選擇器 (`\ufe0f`) 在多處 tkinter widget 中導致圖示渲染異常 — 統一在顯示時移除
+
+**修改的檔案：**
+- `emolang.py`: 新增 `EMOJI_KEY_CONFIG_FILE`、`DEFAULT_EMOJI_KEY_MAP`；重新實作 emoji_frame 為 3 區塊橫排；新增 `_load_emoji_key_map()`、`_save_emoji_key_map()`、`toggle_emoji_key_mode()`、`_configure_emoji_keys()`；修改 `_on_code_keypress()` 支援快捷鍵模式；工具列按鈕加入文字標示
 
