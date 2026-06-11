@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 try:
     import tkinter as tk
-    from tkinter import scrolledtext, filedialog, simpledialog
+    from tkinter import scrolledtext, filedialog, simpledialog, messagebox
     HAS_TKINTER = True
 except ImportError:
     HAS_TKINTER = False
@@ -156,21 +156,31 @@ if HAS_TKINTER:
 
         def _safe_undo(self):
             try:
+                view_frac = self.code_text.yview()[0]
+                insert_pos = self.code_text.index(tk.INSERT)
                 self.code_text.tag_remove("error_tag", "1.0", tk.END)
                 self._error_msg = None
                 self.code_text.edit_undo()
                 self._apply_semantic_highlighting()
+                self._schedule_outline_update()
                 self._update_line_numbers()
+                self.code_text.yview_moveto(view_frac)
+                self.code_text.mark_set(tk.INSERT, insert_pos)
             except tk.TclError:
                 pass
 
         def _safe_redo(self):
             try:
+                view_frac = self.code_text.yview()[0]
+                insert_pos = self.code_text.index(tk.INSERT)
                 self.code_text.tag_remove("error_tag", "1.0", tk.END)
                 self._error_msg = None
                 self.code_text.edit_redo()
                 self._apply_semantic_highlighting()
+                self._schedule_outline_update()
                 self._update_line_numbers()
+                self.code_text.yview_moveto(view_frac)
+                self.code_text.mark_set(tk.INSERT, insert_pos)
             except tk.TclError:
                 pass
 
@@ -327,13 +337,11 @@ if HAS_TKINTER:
             self.code_text.bind('<Tab>', self.on_tab)
             self.code_text.bind('<Motion>', self.on_mouse_move)
             self.code_text.bind('<Leave>', self._on_mouse_leave)
-            self.code_text.bind('<F12>', self._go_to_definition)
-            self.root.bind('<Control-g>', lambda e: self._go_to_definition())
-            self.code_text.bind('<Control-g>', lambda e: self._go_to_definition())
             self.code_text.bind('<F2>', self._rename_symbol)
-            self.root.bind('<F2>', lambda e: self._rename_symbol())
+            self.code_text.bind('<Control-o>', lambda e: self.open_file() or "break")
+            self.code_text.bind('<Control-n>', lambda e: self.new_file() or "break")
+            self.code_text.bind('<Control-s>', lambda e: self.save_file() or "break")
             self.code_text.bind('<Control-Shift-F>', self._show_references)
-            self.root.bind('<Control-Shift-F>', lambda e: self._show_references())
             self.code_text.bind('<MouseWheel>', self._on_code_mousewheel)
             self.code_text.bind('<Button-4>', self._on_code_mousewheel)
             self.code_text.bind('<Button-5>', self._on_code_mousewheel)
@@ -369,10 +377,11 @@ if HAS_TKINTER:
             return sum(2 if ord(c) > 0xFFFF else 1 for c in s)
 
         def _setup_tags(self):
+            self.code_text.tag_configure("error_tag", background="#5a2020", underline=True)
             for name, cfg in SEMANTIC_TAG_MAP.items():
                 self.code_text.tag_configure(name, foreground=cfg["fg"])
             self.code_text.tag_configure("hover_tag", underline=True, underlinefg="#569cd6")
-            self.code_text.tag_configure("error_tag", foreground="#f44747", background="#3a1a1a", underline=True)
+            self.line_numbers.tag_configure("error_gutter", foreground="#f44747")
             self.code_text.tag_configure("fold_marker", foreground="#6a9955")
             self.code_text.tag_bind("fold_marker", "<Button-1>", self._on_fold_click)
             self._update_line_numbers()
@@ -418,9 +427,13 @@ if HAS_TKINTER:
         def _update_line_numbers(self):
             self.line_numbers.config(state='normal')
             self.line_numbers.delete("1.0", tk.END)
+            self.line_numbers.tag_remove("error_gutter", "1.0", tk.END)
             count = int(self.code_text.index(tk.END).split(".")[0]) - 1
             nums = "\n".join(str(i) for i in range(1, count + 1))
             self.line_numbers.insert("1.0", nums)
+            for err_line, _ in getattr(self, '_all_errors', []):
+                if 1 <= err_line <= count:
+                    self.line_numbers.tag_add("error_gutter", f"{err_line}.0", f"{err_line}.0 lineend")
             self.line_numbers.config(state='disabled')
 
         def _apply_semantic_highlighting(self):
@@ -440,11 +453,11 @@ if HAS_TKINTER:
                 parser.diag_parse()
                 seen_lines = set()
                 for rel_line, msg in parser.diag_errors:
-                    if rel_line > 0 and rel_line not in seen_lines and len(self._all_errors) < 5:
+                    if rel_line > 0 and rel_line not in seen_lines and len(self._all_errors) < 100:
                         seen_lines.add(rel_line)
                         self._all_errors.append((rel_line, msg))
 
-                # Mark error lines in the editor
+                # Error lines shown via red line numbers in gutter + error label below
                 for err_line, _ in self._all_errors:
                     if err_line > 0 and err_line <= len(lines):
                         try:
@@ -488,10 +501,6 @@ if HAS_TKINTER:
                         self.code_text.tag_add(tag, f"{tok.line}.{tc}", f"{tok.line}.{tcl_end}")
                     except tk.TclError:
                         pass
-                try:
-                    self.code_text.tag_raise("error_tag")
-                except tk.TclError:
-                    pass
             except Exception as e:
                 msg = f"[HL error] {e}"
                 print(msg, file=sys.stderr)
@@ -553,7 +562,7 @@ if HAS_TKINTER:
                 code = self.code_text.get("1.0", tk.END)
                 lexer = EmoLangLexer(code)
                 parser = EmoLangParser(lexer)
-                nodes = parser.parse()
+                nodes = parser.diag_parse()
                 for node in nodes:
                     self._add_outline_node(node, 0)
             except Exception:
@@ -653,56 +662,6 @@ if HAS_TKINTER:
                 self._hover_tooltip = None
             self.code_text.tag_remove("hover_tag", "1.0", tk.END)
 
-        def _get_def_map(self):
-            code = self.code_text.get("1.0", tk.END)
-            def_map = {}
-            try:
-                lexer = EmoLangLexer(code)
-                parser = EmoLangParser(lexer)
-                nodes = parser.parse()
-                tokens = get_tokens(code)
-                name_tokens = {}
-                for t in tokens:
-                    if t.type == TokenType.TOK_ID:
-                        name_tokens.setdefault(t.value, []).append(t)
-                for n in nodes:
-                    if n.type in ("LET", "FUNC_DEF"):
-                        for t in name_tokens.get(n.name, []):
-                            if t.line == n.line and t.col >= n.col:
-                                def_map[n.name] = t
-                                break
-            except RuntimeError:
-                pass
-            except Exception as e:
-                print(f"[_get_def_map error] {e}", file=sys.stderr)
-            return def_map
-
-        def _go_to_definition(self, event=None):
-            try:
-                cursor = self.code_text.index(tk.INSERT)
-                line = int(cursor.split(".")[0])
-                col = int(cursor.split(".")[1])
-                tok = self._find_token_at(line, col)
-                if not tok or tok.type != TokenType.TOK_ID:
-                    self._debug_label.config(text=f"F12: no ID at ({line},{col})")
-                    return None
-                def_map = self._get_def_map()
-                def_tok = def_map.get(tok.value)
-                if not def_tok:
-                    self._debug_label.config(text=f"F12: '{tok.value}' not in def_map ({len(def_map)} defs)")
-                    return None
-                lines = self.code_text.get("1.0", tk.END).split("\n")
-                line_text = lines[def_tok.line - 1] if def_tok.line - 1 < len(lines) else ""
-                tc = self._tcl_col(line_text, def_tok.col)
-                self.code_text.see(f"{def_tok.line}.{tc}")
-                self.code_text.mark_set(tk.INSERT, f"{def_tok.line}.{tc}")
-                self.code_text.focus_set()
-                self._debug_label.config(text=f"F12: → line {def_tok.line}")
-                return "break"
-            except Exception as e:
-                self._debug_label.config(text=f"F12 error: {e}")
-                return None
-
         def _get_folding_ranges(self):
             code = self.code_text.get("1.0", tk.END)
             tokens = get_tokens(code)
@@ -749,6 +708,7 @@ if HAS_TKINTER:
                     self.code_text.delete(f"{line}.0", f"{line+1}.0")
                     self.code_text.insert(f"{line}.0", text)
             self._folded_regions = []
+            self.code_text.tag_remove("fold_marker", "1.0", tk.END)
             self._apply_semantic_highlighting()
             self._debug_label.config(text="📂 已展開全部區塊")
             self._update_line_numbers()
@@ -761,6 +721,13 @@ if HAS_TKINTER:
                     self.code_text.insert(f"{line}.0", text)
                     self._folded_regions.pop(i)
                     self._apply_semantic_highlighting()
+                    # Re-apply fold_marker tag to remaining regions
+                    self.code_text.tag_remove("fold_marker", "1.0", tk.END)
+                    for _, m in self._folded_regions:
+                        p = self.code_text.search(m, tk.END, backwards=True)
+                        if p:
+                            pl = int(p.split(".")[0])
+                            self.code_text.tag_add("fold_marker", f"{pl}.0", f"{pl+1}.0")
                     self._update_line_numbers()
                     return True
             return False
@@ -837,25 +804,31 @@ if HAS_TKINTER:
                     parent=self.root, initialvalue=tok.value)
                 if not new_name or new_name == tok.value:
                     return None
+                if new_name:
+                    if new_name[0].isdigit():
+                        messagebox.showerror("錯誤", "識別字不能以數字開頭", parent=self.root)
+                        return None
+                    if not new_name[0].isalpha() and new_name[0] != '_':
+                        messagebox.showerror("錯誤", f"識別字不能以特殊符號開頭 ({new_name[0]})", parent=self.root)
+                        return None
                 id_tokens = self._get_all_id_tokens()
                 refs = id_tokens.get(tok.value, [])
                 if not refs:
                     return None
                 if self._folded_regions:
                     self._unfold_all()
-                self.code_text.edit_separator()
+                # Build the new code string in Python, then replace atomically
+                old_code = self.code_text.get("1.0", tk.END)
+                lines = old_code.split("\n")
                 for t in reversed(refs):
-                    self.code_text.edit_separator()
-                    lines = self.code_text.get("1.0", tk.END).split("\n")
-                    line_text = lines[t.line - 1] if t.line - 1 < len(lines) else ""
-                    tc = self._tcl_col(line_text, t.col)
-                    te = tc + sum(2 if ord(c) > 0xFFFF else 1 for c in t.value)
-                    self.code_text.delete(f"{t.line}.{tc}", f"{t.line}.{te}")
-                    self.code_text.insert(f"{t.line}.{tc}", new_name)
+                    col = t.col - 1
+                    old = lines[t.line - 1]
+                    lines[t.line - 1] = old[:col] + new_name + old[col + len(t.value):]
+                new_code = "\n".join(lines)
+                self.code_text.replace("1.0", tk.END, new_code)
                 self._apply_semantic_highlighting()
                 self._schedule_outline_update()
                 self._update_line_numbers()
-                self.code_text.edit_separator()
                 self._debug_label.config(text=f"F2: '{tok.value}' → '{new_name}' ({len(refs)} 處)")
                 return "break"
             except Exception as e:

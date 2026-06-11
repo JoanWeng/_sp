@@ -32,7 +32,7 @@ class EmoLangEvaluator:
         for i in range(len(self.sym_stack) - 1, -1, -1):
             if name in self.sym_stack[i]:
                 return self.sym_stack[i][name]
-        raise RuntimeError(f"找不到變數 {name}")
+        raise NameError(f"名稱 '{name}' 未定義")
 
     def is_truthy(self, v):
         if v.type == 0:
@@ -45,7 +45,12 @@ class EmoLangEvaluator:
 
     def assign_value(self, node, val):
         if node.type == ASTType.AST_VAR:
-            self.memory[self.get_sym_addr(node.name)] = val
+            try:
+                self.memory[self.get_sym_addr(node.name)] = val
+            except NameError:
+                addr = self.alloc_mem(1)
+                self.sym_stack[-1][node.name] = addr
+                self.memory[addr] = val
             return
         if node.type == ASTType.AST_DEREF:
             self.memory[self.eval(node.left).i] = val

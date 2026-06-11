@@ -97,6 +97,9 @@ class EmoLangLexer:
             self.col += 1
             self.current_token = self._emit(TokenType.TOK_RPAREN, ")", 1)
             return
+        if self.src[self.pos] in '[]':
+            raise RuntimeError(f"第 {self.line} 行: 不支援的符號 '{self.src[self.pos]}'")
+
         if self.src[self.pos] == ',':
             self.pos += 1
             self.col += 1
@@ -157,6 +160,9 @@ class EmoLangLexer:
                 byte_len += len(ch.encode('utf-8'))
                 self.pos += 1
                 self.col += 1
+            # Reject identifiers starting with digits (e.g. "123abc")
+            if self.pos < len(self.src) and (self.src[self.pos].isalpha() or self.src[self.pos].isdigit()):
+                raise RuntimeError(f"第 {self.line} 行: 識別字不能以數字開頭")
             self.current_token = self._emit(
                 TokenType.TOK_FLOAT_NUM if is_float else TokenType.TOK_NUM,
                 value, byte_len, char_length=len(value))
@@ -176,13 +182,17 @@ class EmoLangLexer:
         while self.pos < len(self.src) and not self.src[self.pos].isspace():
             if self.match_keyword():
                 break
-            if self.src[self.pos] in '(),':
+            if self.src[self.pos] in '(),[]':
                 break
             ch = self.src[self.pos]
             value += ch
             byte_len += len(ch.encode('utf-8'))
             self.pos += 1
             self.col += 1
+        if value and value[0].isdigit():
+            raise RuntimeError(f"第 {self.line} 行: 識別字不能以數字開頭")
+        if value and not value[0].isalpha() and value[0] != '_':
+            raise RuntimeError(f"第 {self.line} 行: 識別字不能以特殊符號開頭 ({value[0]})")
         self.current_token = self._emit(TokenType.TOK_ID, value, byte_len, char_length=len(value))
 
     def eat(self, expected_type):

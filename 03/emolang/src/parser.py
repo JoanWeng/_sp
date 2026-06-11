@@ -2,6 +2,23 @@ from emolang.src.tokens import TokenType
 from emolang.src.ast import ASTType, ASTNode
 
 
+# Expression node types that, as standalone statements, likely indicate a missing 📢
+_BARE_EXPR_TYPES = {
+    ASTType.AST_NUM, ASTType.AST_FLOAT,
+    ASTType.AST_TRUE, ASTType.AST_FALSE,
+    ASTType.AST_STR, ASTType.AST_BINOP,
+}
+
+# Tokens that can start an expression (subset of _STATEMENT_STARTERS minus keywords/blocks)
+_EXPR_STARTERS = {
+    TokenType.TOK_ID,
+    TokenType.TOK_NUM, TokenType.TOK_FLOAT_NUM, TokenType.TOK_STR,
+    TokenType.TOK_TRUE, TokenType.TOK_FALSE,
+    TokenType.TOK_LPAREN,
+    TokenType.TOK_NOT, TokenType.TOK_INPUT, TokenType.TOK_REF,
+    TokenType.TOK_DEREF, TokenType.TOK_LEN, TokenType.TOK_NEW,
+}
+
 # Tokens that can start a statement — used by diagnostic parser for error recovery
 _STATEMENT_STARTERS = {
     TokenType.TOK_LET, TokenType.TOK_PRINT, TokenType.TOK_IF,
@@ -20,6 +37,55 @@ _STATEMENT_STARTERS = {
 class EmoLangParser:
     def __init__(self, lexer):
         self.lexer = lexer
+
+    @staticmethod
+    def _is_name_type(tok):
+        return tok.type in (
+            TokenType.TOK_ID, TokenType.TOK_NUM, TokenType.TOK_FLOAT_NUM,
+            TokenType.TOK_STR, TokenType.TOK_TRUE, TokenType.TOK_FALSE,
+        )
+
+    def _check_name(self, tok):
+        """Validate that a name token doesn't start with a digit."""
+        if tok.value and tok.value[0].isdigit():
+            raise RuntimeError(f"第 {tok.line} 行: 識別字不能以數字開頭")
+        if not self._is_name_type(tok):
+            raise RuntimeError(f"第 {tok.line} 行: 語法錯誤: 缺少名稱")
+
+    def _diag_check_name(self, tok):
+        """Validate name in diagnostic mode — records error, returns False on failure."""
+        if not self._is_name_type(tok):
+            self.diag_errors.append((tok.line, f"語法錯誤: 缺少名稱"))
+            return False
+        if tok.value and tok.value[0].isdigit():
+            self.diag_errors.append((tok.line, f"第 {tok.line} 行: 識別字不能以數字開頭"))
+            return False
+        return True
+
+    def _diag_skip_to_statement(self):
+        """Skip past the invalid name and any remaining tokens of the broken construct."""
+        self.lexer.advance()  # skip the invalid name token
+        while self.lexer.current_token.type != TokenType.TOK_EOF:
+            t = self.lexer.current_token.type
+            if t in _STATEMENT_STARTERS and \
+               t not in (TokenType.TOK_LBRACE, TokenType.TOK_RBRACE, TokenType.TOK_LPAREN):
+                break
+            self.lexer.advance()
+
+    def _diag_check_undeclared_vars(self, node):
+        """Recursively check an AST node for undeclared variable references."""
+        if node is None:
+            return
+        if node.type == ASTType.AST_VAR:
+            if node.name not in self._declared_vars:
+                self.diag_errors.append((node.line, f"語法錯誤: 未宣告變數「{node.name}」"))
+        for child in [node.left, node.right, node.cond, node.step]:
+            if child is not None:
+                if isinstance(child, list):
+                    for c in child:
+                        self._diag_check_undeclared_vars(c)
+                else:
+                    self._diag_check_undeclared_vars(child)
 
     def create_node(self, ast_type):
         tok = self.lexer.current_token
@@ -216,6 +282,7 @@ class EmoLangParser:
 
     def diag_parse(self):
         self.diag_errors = []
+        self._declared_vars = set()
         try:
             self.lexer.advance()
         except RuntimeError as e:
@@ -230,11 +297,17 @@ class EmoLangParser:
                         statements.append(stmt)
                 except RuntimeError as e:
                     self.diag_errors.append((self.lexer.current_token.line, str(e)))
-                    self.lexer.advance()
+                    try:
+                        self.lexer.advance()
+                    except RuntimeError:
+                        pass
             else:
                 self.diag_errors.append((self.lexer.current_token.line,
                     f"語法錯誤: 多餘的 {self.lexer.current_token.type}"))
-                self.lexer.advance()
+                try:
+                    self.lexer.advance()
+                except RuntimeError as e:
+                    self.diag_errors.append((self.lexer.line, str(e)))
         return statements
 
     def _diag_eat(self, expected_type):
@@ -268,12 +341,16 @@ class EmoLangParser:
             self.lexer.advance()
             node = self.create_node(ASTType.AST_FUNC_DEF)
             node.name = self.lexer.current_token.value
+            if not self._diag_check_name(self.lexer.current_token):
+                self._diag_skip_to_statement()
+                return None
             self.lexer.advance()
             self._diag_eat(TokenType.TOK_LPAREN)
             params = []
             while self.lexer.current_token.type not in (TokenType.TOK_RPAREN, TokenType.TOK_EOF):
                 param = self.create_node(ASTType.AST_VAR)
                 param.name = self.lexer.current_token.value
+                self._diag_check_name(self.lexer.current_token)
                 self.lexer.advance()
                 params.append(param)
                 if self.lexer.current_token.type == TokenType.TOK_COMMA:
@@ -284,31 +361,66 @@ class EmoLangParser:
             return node
 
         elif self.lexer.current_token.type == TokenType.TOK_RETURN:
+            ret_line = self.lexer.current_token.line
             self.lexer.advance()
             node = self.create_node(ASTType.AST_RETURN)
-            node.left = self.parse_expression()
+            node.line = ret_line
+            if self.lexer.current_token.type in _EXPR_STARTERS:
+                node.left = self.parse_expression()
+                self._diag_check_undeclared_vars(node.left)
+            else:
+                self.diag_errors.append((ret_line, "語法錯誤: 🔙 後缺少表達式"))
             return node
 
         elif self.lexer.current_token.type == TokenType.TOK_LET:
+            let_line = self.lexer.current_token.line
             self.lexer.advance()
             node = self.create_node(ASTType.AST_LET)
+            node.line = let_line
             node.name = self.lexer.current_token.value
+            if not self._diag_check_name(self.lexer.current_token):
+                self._diag_skip_to_statement()
+                return None
+            self._declared_vars.add(node.name)
             self.lexer.advance()
             if self.lexer.current_token.type == TokenType.TOK_ASSIGN:
                 self.lexer.advance()
-                node.left = self.parse_expression()
+                if self.lexer.current_token.type in _EXPR_STARTERS:
+                    node.left = self.parse_expression()
+                else:
+                    self.diag_errors.append((let_line, "語法錯誤: 🟰 後缺少表達式"))
+            elif self.lexer.current_token.type in _EXPR_STARTERS and \
+                 self.lexer.current_token.line == node.line:
+                self.diag_errors.append((self.lexer.current_token.line, "語法錯誤: 缺少 🟰"))
+                self.parse_expression()
             return node
 
         elif self.lexer.current_token.type == TokenType.TOK_PRINT:
+            print_line = self.lexer.current_token.line
             self.lexer.advance()
             node = self.create_node(ASTType.AST_PRINT)
-            node.left = self.parse_expression()
+            node.line = print_line
+            if self.lexer.current_token.type in _EXPR_STARTERS:
+                node.left = self.parse_expression()
+                self._diag_check_undeclared_vars(node.left)
+                if self.lexer.current_token.type in _EXPR_STARTERS and \
+                   self.lexer.current_token.line == node.line:
+                    self.diag_errors.append((self.lexer.current_token.line, "語法錯誤: 缺少 ➕"))
+                    self.parse_expression()
+            else:
+                self.diag_errors.append((print_line, "語法錯誤: 📢 後缺少表達式"))
             return node
 
         elif self.lexer.current_token.type == TokenType.TOK_IF:
+            if_line = self.lexer.current_token.line
             self.lexer.advance()
             node = self.create_node(ASTType.AST_IF)
-            node.left = self.parse_expression()
+            node.line = if_line
+            if self.lexer.current_token.type in _EXPR_STARTERS:
+                node.left = self.parse_expression()
+                self._diag_check_undeclared_vars(node.left)
+            else:
+                self.diag_errors.append((if_line, "語法錯誤: 🤔 後缺少條件表達式"))
             node.true_branch = self._diag_parse_block()
             if self.lexer.current_token.type == TokenType.TOK_ELSE:
                 self.lexer.advance()
@@ -319,9 +431,15 @@ class EmoLangParser:
             return node
 
         elif self.lexer.current_token.type == TokenType.TOK_WHILE:
+            while_line = self.lexer.current_token.line
             self.lexer.advance()
             node = self.create_node(ASTType.AST_WHILE)
-            node.left = self.parse_expression()
+            node.line = while_line
+            if self.lexer.current_token.type in _EXPR_STARTERS:
+                node.left = self.parse_expression()
+                self._diag_check_undeclared_vars(node.left)
+            else:
+                self.diag_errors.append((while_line, "語法錯誤: 🔁 後缺少條件表達式"))
             node.true_branch = self._diag_parse_block()
             return node
 
@@ -340,6 +458,9 @@ class EmoLangParser:
             self.lexer.advance()
             node = self.create_node(ASTType.AST_STRUCT_DEF)
             node.name = self.lexer.current_token.value
+            if not self._diag_check_name(self.lexer.current_token):
+                self._diag_skip_to_statement()
+                return None
             self.lexer.advance()
             node.body = self._diag_parse_block()
             return node
@@ -361,6 +482,8 @@ class EmoLangParser:
                 node = self.create_node(ASTType.AST_ASSIGN)
                 node.left = expr
                 node.right = self.parse_expression()
+                if expr.type == ASTType.AST_VAR:
+                    self._declared_vars.add(expr.name)
                 return node
             elif self.lexer.current_token.type == TokenType.TOK_APPEND:
                 self.lexer.advance()
@@ -368,10 +491,29 @@ class EmoLangParser:
                 node.left = expr
                 node.right = self.parse_expression()
                 return node
+            if expr.type == ASTType.AST_VAR:
+                if expr.name not in self._declared_vars:
+                    self.diag_errors.append((expr.line, f"語法錯誤: 未宣告變數「{expr.name}」"))
+            elif expr.type in _BARE_EXPR_TYPES:
+                self.diag_errors.append((expr.line, "語法錯誤: 少了 📢"))
+            if self.lexer.current_token.type in _EXPR_STARTERS and \
+               self.lexer.current_token.line == expr.line:
+                self.diag_errors.append((expr.line, "語法錯誤: 連續表達式缺少運算子"))
+                # Consume remaining expression starters on the same line
+                # to avoid cascading the same error for each consecutive expression
+                while self.lexer.current_token.type in _EXPR_STARTERS and \
+                      self.lexer.current_token.line == expr.line:
+                    try:
+                        self.parse_expression()
+                    except RuntimeError:
+                        self.lexer.advance()
             return expr
         except RuntimeError as e:
             self.diag_errors.append((self.lexer.current_token.line, str(e)))
-            self.lexer.advance()
+            try:
+                self.lexer.advance()
+            except RuntimeError:
+                pass
             return None
 
     # NOTE: GUI emolang.py takes only parser.diag_errors[0] (first error)
@@ -383,12 +525,14 @@ class EmoLangParser:
             self.lexer.advance()
             node = self.create_node(ASTType.AST_FUNC_DEF)
             node.name = self.lexer.current_token.value
+            self._check_name(self.lexer.current_token)
             self.lexer.advance()
             self.lexer.eat(TokenType.TOK_LPAREN)
             params = []
             while self.lexer.current_token.type != TokenType.TOK_RPAREN and self.lexer.current_token.type != TokenType.TOK_EOF:
                 param = self.create_node(ASTType.AST_VAR)
                 param.name = self.lexer.current_token.value
+                self._check_name(self.lexer.current_token)
                 self.lexer.advance()
                 params.append(param)
                 if self.lexer.current_token.type == TokenType.TOK_COMMA:
@@ -408,16 +552,23 @@ class EmoLangParser:
             self.lexer.advance()
             node = self.create_node(ASTType.AST_LET)
             node.name = self.lexer.current_token.value
+            self._check_name(self.lexer.current_token)
             self.lexer.advance()
             if self.lexer.current_token.type == TokenType.TOK_ASSIGN:
                 self.lexer.advance()
                 node.left = self.parse_expression()
+            elif self.lexer.current_token.type in _EXPR_STARTERS and \
+                 self.lexer.current_token.line == node.line:
+                raise RuntimeError(f"第 {self.lexer.current_token.line} 行: 語法錯誤: 缺少 🟰")
             return node
 
         elif self.lexer.current_token.type == TokenType.TOK_PRINT:
             self.lexer.advance()
             node = self.create_node(ASTType.AST_PRINT)
             node.left = self.parse_expression()
+            if self.lexer.current_token.type in _EXPR_STARTERS and \
+               self.lexer.current_token.line == node.line:
+                raise RuntimeError(f"第 {self.lexer.current_token.line} 行: 語法錯誤: 缺少 ➕")
             return node
 
         elif self.lexer.current_token.type == TokenType.TOK_IF:
@@ -455,6 +606,7 @@ class EmoLangParser:
             self.lexer.advance()
             node = self.create_node(ASTType.AST_STRUCT_DEF)
             node.name = self.lexer.current_token.value
+            self._check_name(self.lexer.current_token)
             self.lexer.advance()
             node.body = self.parse_block()
             return node
@@ -472,4 +624,9 @@ class EmoLangParser:
             node.left = expr
             node.right = self.parse_expression()
             return node
+        if expr.type in _BARE_EXPR_TYPES:
+            raise RuntimeError(f"第 {expr.line} 行: 語法錯誤: 少了 📢")
+        if self.lexer.current_token.type in _EXPR_STARTERS and \
+           self.lexer.current_token.line == expr.line:
+            raise RuntimeError(f"第 {expr.line} 行: 語法錯誤: 連續表達式缺少運算子")
         return expr

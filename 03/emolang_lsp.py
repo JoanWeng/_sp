@@ -109,10 +109,23 @@ _NUMBER_SET = {TokenType.TOK_NUM, TokenType.TOK_FLOAT_NUM}
 def get_tokens(code):
     tokens = []
     lexer = EmoLangLexer(code)
-    lexer.advance()
-    while lexer.current_token.type != TokenType.TOK_EOF:
+    while True:
+        try:
+            lexer.advance()
+        except RuntimeError:
+            if lexer.pos < len(lexer.src):
+                ch = lexer.src[lexer.pos]
+                lexer.pos += 1
+                if ch == '\n':
+                    lexer.line += 1
+                    lexer.col = 1
+                else:
+                    lexer.col += 1
+                continue
+            break
+        if lexer.current_token is None or lexer.current_token.type == TokenType.TOK_EOF:
+            break
         tokens.append(lexer.current_token)
-        lexer.advance()
     return tokens
 
 

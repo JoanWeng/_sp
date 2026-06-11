@@ -1,8 +1,10 @@
-# EmoLang 直譯器開發記錄
+# EmoLang 直譯器開發記錄  
+
+> ⚠️ **注意**：本文件由 AI 輔助維護，記錄可能不完整。若發現遺漏請提交 Issue。
 
 ---
 
-## 2024 工作紀錄
+## 工作紀錄
 
 ### 1. 模組拆分
 
@@ -335,4 +337,133 @@ player📌"hp" 🟰 100
 - `emolang.py`: 新增 `_get_folding_ranges`, `_fold_all`, `_unfold_all`, `_unfold_marker_at_line`, `_on_fold_click`, `_get_all_id_tokens`, `_show_references`, `_rename_symbol`, `_get_def_map`, `_go_to_definition`, `_update_line_numbers`, `_sync_line_numbers_scroll`, `_on_code_scroll`, `_on_code_mousewheel`；編輯區從 `ScrolledText` 改為 `tk.Text + Scrollbar`；`new_file` / `open_file` / `insert_emoji` / `on_key_release` 加入 `_update_line_numbers()` 呼叫
 - `emolang_lsp.py`: 無變更
 - `test_lsp.py`: 無變更
+
+---
+
+### 13. 診斷修復 — 空字串誤報與行號偏移問題 (2026.06.11)
+
+**問題回報：**
+1. `""`（空字串）作為 bare expression 時被錯誤標記為「少了 📢」
+2. 新增/刪除行數後，診斷器產生錯誤的語法判斷（如 `📢` 後接換行導致 EOF 行號錯誤）
+
+**Bug 分析：**
+- **空字串誤報**：`_BARE_EXPR_TYPES` 包含 `AST_STR`，導致所有 bare 字串表達式（含 `""`）都被標記為「少了 📢」。但空字串是合法的表達式值，不應視為語法錯誤。
+- **行號偏移**：`_diag_parse_statement` 中 `create_node()` 從 `self.lexer.current_token` 取得行號，但該行號在關鍵字被 consume 後指向了下一個 token 或 EOF，導致錯誤標記在錯行。
+- **缺少表達式保護**：`📢`、`📦 🟰`、`🤔`、`🔁`、`🔙` 等關鍵字後直接呼叫 `parse_expression()`，若當前 token 為 EOF 則拋出 `RuntimeError("解析表達式出錯")`，該錯誤被主循環捕獲時已無正確行號資訊。
+
+**修改的檔案：**
+- `emolang/src/parser.py`:
+
+  **`_BARE_EXPR_TYPES`**：
+  - 移除 `ASTType.AST_STR`，僅保留 `AST_NUM`、`AST_FLOAT`、`AST_TRUE`、`AST_FALSE`
+
+  **`_diag_parse_statement`（診斷解析器）**：
+  - `TOK_RETURN`、`TOK_LET`、`TOK_PRINT`、`TOK_IF`、`TOK_WHILE`：在 `advance()` 前暫存關鍵字行號，`create_node()` 後覆蓋為關鍵字行號
+  - `TOK_LET`：`🟰` 後加入 `_EXPR_STARTERS` 檢查，若無表達式則報「語法錯誤: 🟰 後缺少表達式」
+  - `TOK_PRINT`：加入 `_EXPR_STARTERS` 檢查，若無表達式則報「語法錯誤: 📢 後缺少表達式」而非拋出未知錯誤
+  - `TOK_RETURN`：加入 `_EXPR_STARTERS` 檢查，若無表達式則報「語法錯誤: 🔙 後缺少表達式」
+  - `TOK_IF`：加入 `_EXPR_STARTERS` 檢查，若無表達式則報「語法錯誤: 🤔 後缺少條件表達式」
+  - `TOK_WHILE`：加入 `_EXPR_STARTERS` 檢查，若無表達式則報「語法錯誤: 🔁 後缺少條件表達式」
+
+**影響範圍：**
+- `_BARE_EXPR_TYPES` 變更影響：診斷器與非診斷解析器的「少了 📢」判斷。`""`、`"字串"` 等字串表達式不再被標記。數字 (`42`)、小數 (`3.14`)、布林 (`🟢`/`🔴`) 仍會被標記。
+- `node.line` 變更影響：大綱面板跳轉、錯誤標記行、定義跳轉，現在指向關鍵字行而非變數名/表達式行。
+- 所有診斷錯誤均有對應的、不拋異常的描述。
+
+**最終檔案狀態（差分摘要）：**
+
+| 區塊 | 變更 |
+|------|------|
+| `_BARE_EXPR_TYPES` | `AST_STR` 移除 |
+| `TOK_RETURN` 分支 | 行號快取 + 表達式守衛 |
+| `TOK_LET` 分支 | 行號快取 + 🟰 後表達式守衛 |
+| `TOK_PRINT` 分支 | 行號快取 + 表達式守衛 + 缺少 ➕ 檢查 |
+| `TOK_IF` 分支 | 行號快取 + 表達式守衛 |
+| `TOK_WHILE` 分支 | 行號快取 + 表達式守衛 |
+
+---
+
+### 12. LSP 整合測試修正與 VS Code 設定
+
+**問題：** `test_lsp.py` 中 `LSPClient` 使用 `proc.stdout.read1()` 阻塞讀取，非 thread context 下會卡住，導致測試超時。
+
+**修正：** 將 stdout 讀取改為背景 reader thread + `queue.Queue`，所有 response/notification 讀取透過 queue timeout 完成。新增 `recv_notification(method)` 簡化單一通知接收。
+
+**受影響的測試函式：**
+- `test_diagnostics` → 改用 `recv_notification("textDocument/publishDiagnostics")`
+- `test_did_save` → 改用 `recv_notification("textDocument/publishDiagnostics")`
+- `test_did_close` → 先 consume didOpen diagnostics，再取 didClose diagnostics
+
+**新增檔案：**
+- `03/emolang-vscode/package.json` — VS Code 擴充套件設定，註冊 `.emo` 語言
+- `03/emolang-vscode/extension.js` — `LanguageClient` 啟動 `emolang_lsp.py`
+
+**安裝路徑：**
+```
+%USERPROFILE%\.vscode\extensions\emolang-lsp
+```
+
+**移除方式：** 刪除上述目錄後重新載入 VS Code。
+
+---
+
+### 13. LSP VS Code 擴充套件路徑修正 (2026.06.11)
+
+**問題：** 擴充套件已安裝至 `%USERPROFILE%\.vscode\extensions\emolang-lsp`，但 VS Code 中 LSP 未啟動（無語法突顯、無大綱）。
+
+**原因：** `extension.js` 使用 `context.asAbsolutePath(path.join("..", "emolang_lsp.py"))`，從安裝目錄往上一層找 `emolang_lsp.py`，但實際檔案位於 OneDrive 的 `03/` 目錄下，路徑不匹配。
+
+**修正：** 將 `extension.js` 中的 LSP 腳本路徑改為絕對路徑：
+- `C:/Users/e3545/OneDrive/桌面/ccc114b/系統程式/_sp/03/emolang_lsp.py`
+
+**修改的檔案：**
+- `%USERPROFILE%\.vscode\extensions\emolang-lsp\extension.js` — 硬編碼路徑修正
+
+**驗證方式：**
+- `python3 test_lsp.py` — 15 項測試全部通過
+- VS Code 重新載入後，打開 `.emo` 檔案應有語法突顯與大綱
+
+---
+
+### 14. 移除 VS Code 延伸套件與 LSP 測試 (2026.06.11)
+
+**決定：** 取消 VS Code 上的 LSP 整合，移除延伸套件及相關測試檔案。
+
+**移除的項目：**
+| 項目 | 說明 |
+|------|------|
+| `emolang-vscode/` | VS Code 擴充套件目錄（extension.js, package.json） |
+| `test_lsp.py` | LSP 整合測試 |
+| `~/.vscode/extensions/emolang-lsp/` | 已安裝的 VS Code 延伸套件 |
+| 相關 `__pycache__` | LSP 與測試的編譯快取 |
+
+**保留的項目：**
+- `emolang_lsp.py` — LSP 伺服器主程式仍保留，可供其他編輯器或程式使用
+- `emolang.py` — GUI/CLI/REPL 主程式不受影響
+- `emolang/` — 核心套件（lexer/parser/evaluator）維持原狀
+- 大綱面板、語法突顯、程式碼摺疊等 GUI 功能均正常運作
+
+---
+
+### 15. 移除跳至定義 + 錯誤行號修復 + 快捷鍵強化 (2026.06.11)
+
+**移除功能：**
+- 移除 `F12` / `Ctrl+G` 跳至定義快捷鍵
+- 移除 `_get_def_map()` 與 `_go_to_definition()` 方法
+
+**問題修復：**
+1. **空字串 `""` bare expression 未報錯** — 移除 diagnostic parser 中 `AST_STR and expr.name == ""` 的豁免，`""` 現在與其他 bare expression 一樣標記「少了 📢」
+2. **快捷鍵重複執行** — `Ctrl+O/N/S` 同時綁定 `code_text` 和 `root` 導致事件冒泡觸發兩次；code_text binding 加入 `or "break"` 阻斷傳播
+3. **get_tokens 行號錯亂** — `RuntimeError` 發生在 `\n` 位置時，錯誤恢復的 `pos += 1` 跳過換行但未增 `lexer.line`，導致後續所有 token 行號錯誤，語法突顯無法正確套用。修正為跳過時偵測 `\n` 並同步更新行號/欄位
+4. **錯誤標記重現** — `error_tag`（深紅背景 + 底線）在 root cause 修復後安全加回，維持最低優先權不覆蓋語法顏色
+
+**新增功能：**
+- `Ctrl+O` — 開啟檔案 (`open_file`)
+- `Ctrl+N` — 新建檔案 (`new_file`)
+- `Ctrl+S` — 儲存檔案 (`save_file`)
+
+**修改的檔案：**
+- `emolang.py`: 移除 `_get_def_map`、`_go_to_definition` 方法及 F12/Ctrl+G 綁定；新增 Ctrl+O/N/S 綁定；所有 code_text 快捷鍵回傳 `"break"`；加回 `error_tag` 設定與套用
+- `emolang_lsp.py`: `get_tokens` 錯誤恢復加入 `\n` 行號同步
+- `emolang/src/parser.py`: 移除 `AST_STR and expr.name == ""` 豁免
 
